@@ -427,6 +427,7 @@ class ClaudeCodeAdapter(_SubprocessAdapterBase):
         allowed = packet.get("allowed_tools")
         if isinstance(allowed, (list, tuple)) and allowed:
             argv += ["--allowedTools", ",".join(map(str, allowed))]
+        argv += ["--add-dir", str(command.working_directory)]
         # Unattended edits within the packet's sandbox; the packet's
         # allowed_paths/forbidden_paths are enforced by the controller via cwd
         # selection and post-hoc diff checks, not by the CLI.
