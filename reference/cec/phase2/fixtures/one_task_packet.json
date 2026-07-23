@@ -1,0 +1,15 @@
+{
+  "packet_version": 1,
+  "task_class": "LOW_RISK_TEST_REPORT",
+  "objective": "Run the specified read-only CEC tests, save their complete output to the specified artifact, and report typed mechanical evidence. Do not edit source files.",
+  "test_command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "reference/cec/phase0/tests/test_controller.py",
+    "reference/cec/phase1/tests/test_actions.py"
+  ],
+  "artifact_relative_path": "runtime/live-slice-test-output.txt",
+  "allowed_tools": ["Bash"]
+}
