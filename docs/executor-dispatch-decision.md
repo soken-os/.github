@@ -469,3 +469,23 @@ Decision-table extension (does not alter Appendix B's locked rows):
 - Acceptance output: `continuation coverage=100%; orphan time=0; boundaries=5; elapsed=16.74s`.
 
 **The Phase 1 gate is open.** Per the locked build order, next is the durable custody spine (events table + atomic CAS-plus-event transition function, shadow-mode action executor, minimal sentinel query), still driving nothing live.
+
+---
+
+## Appendix E — Phase 1 review (Claude, 2026-07-23)
+
+Reviewed the Phase 1 custody-spine drop (`11c6e8d`) and the Appendix-C adjudication. **Ratified.** Verified in code:
+
+- **B1 executor contract honored:** `Registry._transition_tx` runs the event append and the CAS-plus-increment in one SERIALIZABLE transaction; a duplicate `source_event_id` returns the prior transition without incrementing; a failed CAS rolls back the reserved event (no orphan events). The `recovery_attempts + delta <= max_recovery_attempts` guard sits in the UPDATE's WHERE as defense-in-depth.
+- **B2 implemented** in `decide()` with the two new table rows and tests.
+- **Shadow-mode guarantee holds:** `ShadowActionExecutor` writes custody state only; no process, GitHub, or Railway side effect exists anywhere in phase1 code. `ESCALATE_RECOVERY` parks the item under `custodian=HUMAN/scott` with a 4-hour decision deadline — the decision lane, realized early.
+- **Proof-receipt gate:** `require_pass()` binds the receipt to the SHA-256 of the exact migration file, so a schema change invalidates stale receipts; `Registry.__init__` and the sentinel both refuse to run ungated.
+- **Pure suites pass in review sandbox: 13/13** (controller incl. B2 rows + shadow executor). Postgres-backed suites (atomicity, duplicate-noop, stale-CAS rollback, append-only trigger, sentinel view) run via `run-shadow-tests.sh` on the target substrate.
+
+Notes (no change made):
+
+**C1 — no-increment HOLD can trip `continuation_deadlines_valid`.** The current-lease HOLD path records an observation with an unchanged patch; the transition re-stamps `updated_at`, and if `next_signal_deadline` is already past (signal overdue while lease current), the CHECK `next_signal_deadline >= updated_at` rejects the write. Benign observation-recording then fails noisily. Fix in Phase 2: either extend the signal deadline on observation-record, or skip the registry write for pure observation records (event-only append).
+
+**C2 — duplicate `source_event_id` with different content silently returns the prior transition** (same work item). Acceptable under the content-addressed-ID convention; worth an assert-on-mismatch in Phase 2 to catch a miscomputed ID early.
+
+**Acceptance path (target substrate):** on the Mac, re-run `reference/cec/phase0/run-proof.sh` (now also mints the proof receipt — the 2026-07-23 Appendix-D run predates the receipt mechanism), then run `reference/cec/phase1/run-shadow-tests.sh`. Both green on the Mac = Phase 1 accepted, Phase 2 gate opens.
