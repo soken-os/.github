@@ -59,3 +59,20 @@ def test_live_expired_worker_is_terminated_before_redispatch():
 def test_decide_is_referentially_transparent():
     i, o = item(), obs(errors=("offline",))
     assert decide(i, o) == decide(i, o)
+
+
+def test_hold_counts_toward_escalation_ceiling():
+    # Every hold on an expired lease must carry the increment flag; otherwise a
+    # permanently failing observer holds forever and escalation is unreachable.
+    action = expired_lease_action(item(), obs(errors=("process observer timeout",)))
+    assert action.kind is ActionKind.HOLD_UNOBSERVABLE
+    assert action.payload["increment_recovery_attempts"] is True
+
+
+def test_escalates_at_ceiling_instead_of_holding_forever():
+    at_ceiling = item(recovery_attempts=3, max_recovery_attempts=3)
+    for observation in (obs(errors=("offline",)), obs()):  # errored / not observed
+        action = expired_lease_action(at_ceiling, observation)
+        assert action.kind is ActionKind.ESCALATE_RECOVERY
+        assert action.payload["redispatch_allowed"] is False
+        assert "increment_recovery_attempts" not in action.payload

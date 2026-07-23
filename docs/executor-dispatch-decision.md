@@ -432,3 +432,15 @@ The locked order starts at the executor spine; `work_packet` is assumed to exist
 `reference/cec/phase0/run-proof.sh` starts an isolated Postgres 16 container on localhost, installs DBOS in a local virtual environment, applies the exact locked migration, runs unit/constraint tests, and replays Task 151 with a deterministic echo fixture. The harness sends `SIGKILL` after each of five durable workflow boundaries and queries Postgres while the controller is dead. Every in-flight record must still expose custodian, next signal, deadline, and recovery action before DBOS restarts it.
 
 Acceptance output: `continuation coverage=100%; orphan time=0; boundaries=5`.
+
+---
+
+## Appendix C — Phase-0 review note (Claude, 2026-07-23)
+
+Reviewed Appendix B and the Phase-0 drop. A1–A5 resolutions verified in code: the observer-error gate, per-item partitioned queue, controller-only renewal, and the kill harness all match the lock. Findings:
+
+**B1 — Fixed in-place: the escalation ceiling was unreachable.** `expired_lease_action` read `recovery_attempts` for the `ESCALATE_RECOVERY` ceiling, but no code path ever incremented it, so a permanently failing worker observer produced an infinite silent `HOLD_UNOBSERVABLE` — safe against double-builders, but it violated the governing invariant (an unobservable worker had no mechanical trigger). Fix: every hold on an *expired* lease now carries `increment_recovery_attempts: true` (the action executor performs the CAS-guarded increment), and at the ceiling the decision escalates instead of incrementing so the `recovery_attempts <= max_recovery_attempts` CHECK is never violated. Holds on a *current* lease intentionally do not count — transient observer blips before expiry are harmless and the lease deadline remains the trigger. Tests added.
+
+**B2 — Note for Phase 2 (no change made):** in `decide()`, CI green with `observation.pr` absent (PR observer returned nothing, no error) falls through to `REQUEST_DECISION` — asking Scott because data is missing rather than because authority is missing. Consider distinguishing "merge authority unknown (observer gap)" → `HOLD_UNOBSERVABLE` from "merge authority absent" → `REQUEST_DECISION` when the Phase-2 observers are real.
+
+**B3 — Note for the adapter (no change made):** `observe()`'s pid probe (`os.kill(pid, 0)`) can misreport on PID reuse (a recycled pid reads as `RUNNING`, and `terminate()` could signal an innocent process group). Production hardening: record process start-time alongside the pid in the sidecar and require both to match, or use pidfds. Not a Phase-0 concern (echo fixture only).

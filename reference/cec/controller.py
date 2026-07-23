@@ -59,6 +59,37 @@ def _action(
     )
 
 
+def _hold_or_escalate(
+    item: Mapping[str, Any], suffix: str, **extra: Any
+) -> ReconcileAction:
+    """Hold custody on an unobservable expired lease, counting toward the ceiling.
+
+    Every hold on an EXPIRED lease must increment recovery_attempts (the action
+    executor performs the CAS-guarded increment when the payload flag is set);
+    otherwise a permanently failing observer holds forever and the escalation
+    ceiling is unreachable. At the ceiling, escalate instead of incrementing so
+    the schema CHECK (recovery_attempts <= max_recovery_attempts) is never hit.
+    """
+    attempts = int(item.get("recovery_attempts", 0))
+    maximum = int(item.get("max_recovery_attempts", 3))
+    if attempts >= maximum:
+        return _action(
+            item,
+            ActionKind.ESCALATE_RECOVERY,
+            suffix,
+            redispatch_allowed=False,
+            **extra,
+        )
+    return _action(
+        item,
+        ActionKind.HOLD_UNOBSERVABLE,
+        suffix,
+        redispatch_allowed=False,
+        increment_recovery_attempts=True,
+        **extra,
+    )
+
+
 def expired_lease_action(
     item: Mapping[str, Any], observation: Observation
 ) -> ReconcileAction:
@@ -71,27 +102,11 @@ def expired_lease_action(
     if observation.observed_at < item["lease_expires_at"]:
         return _action(item, ActionKind.NONE, "lease-current")
     if observation.observer_errors:
-        attempts = int(item.get("recovery_attempts", 0))
-        maximum = int(item.get("max_recovery_attempts", 3))
-        kind = (
-            ActionKind.ESCALATE_RECOVERY
-            if attempts >= maximum
-            else ActionKind.HOLD_UNOBSERVABLE
-        )
-        return _action(
-            item,
-            kind,
-            "worker-unobservable",
-            redispatch_allowed=False,
-            observer_errors=observation.observer_errors,
+        return _hold_or_escalate(
+            item, "worker-unobservable", observer_errors=observation.observer_errors
         )
     if observation.worker is None:
-        return _action(
-            item,
-            ActionKind.HOLD_UNOBSERVABLE,
-            "worker-not-observed",
-            redispatch_allowed=False,
-        )
+        return _hold_or_escalate(item, "worker-not-observed")
     if observation.worker.state is WorkerProcessState.RUNNING:
         return _action(
             item,
@@ -113,9 +128,7 @@ def expired_lease_action(
             redispatch_allowed=True,
             next_custodian="CONTROLLER",
         )
-    return _action(
-        item, ActionKind.HOLD_UNOBSERVABLE, "worker-starting", redispatch_allowed=False
-    )
+    return _hold_or_escalate(item, "worker-starting")
 
 
 def decide(item: Mapping[str, Any], observation: Observation) -> ReconcileAction:
