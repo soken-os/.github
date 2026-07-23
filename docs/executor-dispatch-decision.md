@@ -444,3 +444,15 @@ Reviewed Appendix B and the Phase-0 drop. A1–A5 resolutions verified in code: 
 **B2 — Note for Phase 2 (no change made):** in `decide()`, CI green with `observation.pr` absent (PR observer returned nothing, no error) falls through to `REQUEST_DECISION` — asking Scott because data is missing rather than because authority is missing. Consider distinguishing "merge authority unknown (observer gap)" → `HOLD_UNOBSERVABLE` from "merge authority absent" → `REQUEST_DECISION` when the Phase-2 observers are real.
 
 **B3 — Note for the adapter (no change made):** `observe()`'s pid probe (`os.kill(pid, 0)`) can misreport on PID reuse (a recycled pid reads as `RUNNING`, and `terminate()` could signal an innocent process group). Production hardening: record process start-time alongside the pid in the sidecar and require both to match, or use pidfds. Not a Phase-0 concern (echo fixture only).
+
+---
+
+## Appendix D — Phase 0 acceptance record (2026-07-23)
+
+**Phase 0 PASSED on the target substrate** (Scott's Mac, Apple Silicon, Python 3.12, DBOS 2.28.0, Postgres 16 in Docker at `127.0.0.1:55432`), run by Scott from a fresh clone at head `21885af`.
+
+- Constraint + controller tests: **7 passed** (includes the B1 ceiling tests).
+- Kill harness: controller SIGKILL'd after each of the five boundaries (`REGISTERED`, `DISPATCHED`, `EXIT_OBSERVED`, `RECOVERY_PLANNED`, `EVIDENCE_VERIFIED`); at every death the registry retained custodian, next signal, deadline, and recovery action; DBOS recovered the workflow each time and drove the item to `COMPLETE`.
+- Acceptance output: `continuation coverage=100%; orphan time=0; boundaries=5; elapsed=16.74s`.
+
+**The Phase 1 gate is open.** Per the locked build order, next is the durable custody spine (events table + atomic CAS-plus-event transition function, shadow-mode action executor, minimal sentinel query), still driving nothing live.
