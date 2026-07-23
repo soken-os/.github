@@ -52,6 +52,7 @@ Replacement drills: (1) delete materialized `work_items` projections and rebuild
 | **1 — Durable custody spine** | `work_items`, continuation `CHECK`, leases/fencing, DBOS workflow, level-triggered shadow reconciliation, events, minimal sentinel query. Drives nothing. |
 | **2 — One-task live slice** | One worker adapter, command ACK, typed result claim, evidence verification, GitHub/Railway reconciliation, notification outbox. Cut over one low-risk task while CEC v2 remains reversible. |
 | **3** | Pull queue, dependencies, resource locks, deterministic routing. |
+| **3.5** | Intake ledger → planner → contract validator; schema-valid packets required before multi-task autonomy. |
 | **4** | Scott decision lane and acknowledged two-way radio. |
 | **5** | Cockpit generated directly from registry. |
 | **6** | Independent sentinel substrate and full fire drills. |
@@ -391,3 +392,43 @@ Adapters read `XAI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` from the en
 The locked order starts at the executor spine; `work_packet` is assumed to exist. Fine for the Phase 2 one-task slice (hand-author the packet), but the intake ledger → planner → contract-validator path needs its own phase before multi-task autonomy, or packets become an unvalidated hand-off. Recommend inserting it as Phase 3.5 (before decision-lane/cockpit expansion) or naming it explicitly as out-of-V1.
 
 **Minor:** `continuation_deadlines_valid` is a write-time sanity guard (it compares to `updated_at`, not wall-clock), so it correctly enforces "deadlines are in the future *when written*," not liveness — liveness is reconciliation's job. Worth a one-line code comment so no one mistakes it for a running guarantee. Consider a trigger to keep `updated_at` honest if any transition path forgets to set it.
+
+---
+
+## Appendix B — Appendix-A resolution and Phase-0 lock (2026-07-23)
+
+### Findings
+
+- **A1 — ACCEPT WITH AMENDMENT.** Observer errors and absent observations never permit redispatch. `EXITED` or `MISSING` permits non-terminate reclaim only when the worker observer completed without error; adapters must emit `MISSING` only after an authoritative process-table/lock probe. `RUNNING` is fenced and terminated before a later cycle may redispatch. See `reference/cec/controller.py`.
+- **A2 — ACCEPT.** Reconciliation uses one DBOS partitioned queue, partition key `work_item_id`, concurrency one per partition, plus a deduplication ID. CAS remains mandatory because serialization is an efficiency control, not the correctness boundary. See `reference/cec/queueing.py`.
+- **A3 — ACCEPT.** Only the controller renews a lease from authoritative observed liveness. Workers never select expiry; their token/epoch appears only on acknowledgement, events, and result claims.
+- **A4 — ACCEPT.** Keys and credentials are strictly out-of-band through the process environment or a local secret store. They are rejected from durable packets and registry fields.
+- **A5 — ACCEPT WITH AMENDMENT.** Phase 2 uses one hand-authored, schema-validated packet. Intake ledger → planner → contract validator becomes **Phase 3.5**, after routing/dependency mechanics and before the human decision lane. Multi-task autonomy cannot begin before 3.5 passes.
+
+### Locked Phase-2 decision table
+
+`decide(item, observation)` is pure: it reads no clock, database, network, filesystem, environment, or model. `observation.observed_at` is the only time input. The one-task slice table-tests these rows; observer error takes precedence over inferred absence.
+
+| Stage | Wait | Observation | Action |
+|---|---|---|---|
+| terminal | any | any | `NONE` |
+| any nonterminal | any | any required observer errored, lease current | `HOLD_UNOBSERVABLE` |
+| executing | worker | observer errored, lease expired | `HOLD_UNOBSERVABLE`, then `ESCALATE_RECOVERY` at retry ceiling; never redispatch |
+| executing | worker | no worker observation, lease expired | `HOLD_UNOBSERVABLE`; never redispatch |
+| executing | worker | `RUNNING`, lease current | `RENEW_LEASE` (controller only) |
+| executing | worker | `RUNNING`, lease expired | `RECLAIM_EXPIRED(terminate=true, redispatch=false)` |
+| executing | worker | authoritative `EXITED`/`MISSING`, lease expired | `RECLAIM_EXPIRED(terminate=false, redispatch=true)` |
+| ready | none | no errors | `LAUNCH_WORKER` |
+| any nonterminal | any | typed result claim | `VERIFY_RESULT` |
+| verifying | CI | CI failed | `LAUNCH_WORKER` with fix packet |
+| verifying | CI | CI green, merge authorized | `ENABLE_AUTO_MERGE` |
+| verifying | CI | CI green, merge not authorized | `REQUEST_DECISION` |
+| verifying | merge | PR merged, deployment not exact | `NONE` / wait for deployment signal |
+| accepting | deploy | every required host serves exact merge SHA | `COMPLETE` |
+| any nonterminal | any | no actionable level change | `NONE` |
+
+### Phase-0 executable proof
+
+`reference/cec/phase0/run-proof.sh` starts an isolated Postgres 16 container on localhost, installs DBOS in a local virtual environment, applies the exact locked migration, runs unit/constraint tests, and replays Task 151 with a deterministic echo fixture. The harness sends `SIGKILL` after each of five durable workflow boundaries and queries Postgres while the controller is dead. Every in-flight record must still expose custodian, next signal, deadline, and recovery action before DBOS restarts it.
+
+Acceptance output: `continuation coverage=100%; orphan time=0; boundaries=5`.

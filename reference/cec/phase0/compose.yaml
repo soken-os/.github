@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cec
+      POSTGRES_PASSWORD: cec-phase0-local-only
+      POSTGRES_DB: cec_phase0
+    ports: ["127.0.0.1:55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cec -d cec_phase0"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+    volumes: ["cec_phase0_pg:/var/lib/postgresql/data"]
+volumes:
+  cec_phase0_pg:
