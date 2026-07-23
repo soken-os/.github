@@ -182,7 +182,14 @@ def decide(item: Mapping[str, Any], observation: Observation) -> ReconcileAction
         and observation.ci
         and observation.ci.get("state") == "GREEN"
     ):
-        if observation.pr and observation.pr.get("merge_authorized") is True:
+        if observation.pr is None:
+            return _action(
+                item,
+                ActionKind.HOLD_UNOBSERVABLE,
+                "merge-authority-unknown",
+                redispatch_allowed=False,
+            )
+        if observation.pr.get("merge_authorized") is True:
             return _action(item, ActionKind.ENABLE_AUTO_MERGE, "enable-automerge")
         return _action(item, ActionKind.REQUEST_DECISION, "merge-authority")
     if (

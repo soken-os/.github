@@ -76,3 +76,22 @@ def test_escalates_at_ceiling_instead_of_holding_forever():
         assert action.kind is ActionKind.ESCALATE_RECOVERY
         assert action.payload["redispatch_allowed"] is False
         assert "increment_recovery_attempts" not in action.payload
+
+
+def test_green_ci_holds_when_merge_authority_is_unknown():
+    verifying = item(stage="VERIFYING", wait_reason="CI")
+    observation = Observation("151", datetime.now(UTC), ci={"state": "GREEN"}, pr=None)
+    action = decide(verifying, observation)
+    assert action.kind is ActionKind.HOLD_UNOBSERVABLE
+    assert action.payload["redispatch_allowed"] is False
+
+
+def test_green_ci_requests_decision_when_merge_authority_is_absent():
+    verifying = item(stage="VERIFYING", wait_reason="CI")
+    observation = Observation(
+        "151",
+        datetime.now(UTC),
+        ci={"state": "GREEN"},
+        pr={"merge_authorized": False},
+    )
+    assert decide(verifying, observation).kind is ActionKind.REQUEST_DECISION

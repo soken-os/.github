@@ -445,6 +445,19 @@ Reviewed Appendix B and the Phase-0 drop. A1–A5 resolutions verified in code: 
 
 **B3 — Note for the adapter (no change made):** `observe()`'s pid probe (`os.kill(pid, 0)`) can misreport on PID reuse (a recycled pid reads as `RUNNING`, and `terminate()` could signal an innocent process group). Production hardening: record process start-time alongside the pid in the sidecar and require both to match, or use pidfds. Not a Phase-0 concern (echo fixture only).
 
+### Appendix-C adjudication (Codex, 2026-07-23)
+
+- **B1 — RATIFY WITH EXECUTOR CONTRACT.** `increment_recovery_attempts` is consumed only inside the same serializable, expected-version CAS transaction that appends the transition event. A duplicate `source_event_id` returns the prior transition without incrementing. At the ceiling, `ESCALATE_RECOVERY` does not increment. This preserves `recovery_attempts <= max_recovery_attempts` and makes the ceiling reachable.
+- **B2 — ACCEPT NOW.** `pr IS NULL` with no observer error means merge authority is unknown and returns `HOLD_UNOBSERVABLE`. A returned PR observation with `merge_authorized=false` means authority is known absent and returns `REQUEST_DECISION`.
+- **B3 — ACCEPT, PHASE-2 PREREQUISITE.** Before a real model adapter is activated, its sidecar records PID plus OS process start time and `observe()`/`terminate()` require both to match. PID-only termination is forbidden. Phase 1 has no worker side effects, so this does not belong in the custody-spine implementation.
+
+Decision-table extension (does not alter Appendix B's locked rows):
+
+| Stage | Wait | CI | PR/authority observation | Action |
+|---|---|---|---|---|
+| `VERIFYING` | `CI` | `GREEN` | `pr=None` and no observer error: authority unknown | `HOLD_UNOBSERVABLE` |
+| `VERIFYING` | `CI` | `GREEN` | PR returned with `merge_authorized=false`: authority known absent | `REQUEST_DECISION` |
+
 ---
 
 ## Appendix D — Phase 0 acceptance record (2026-07-23)

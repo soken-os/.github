@@ -10,4 +10,5 @@ cd "$repo_dir"
 python -m reference.cec.phase0.bootstrap
 CEC_RUN_POSTGRES_TESTS=1 pytest -q reference/cec/phase0/tests
 python -m reference.cec.phase0.kill_harness
+python -m reference.cec.phase0.gate
 echo "Phase 0 substrate and continuation invariant proof passed."
