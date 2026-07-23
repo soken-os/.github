@@ -498,3 +498,7 @@ Notes (no change made):
 - Phase 1 shadow suite through the receipt gate: **18 passed** — including the Postgres-backed proofs of atomic event+CAS commit, duplicate `source_event_id` no-op, stale-CAS rollback of the reserved event, the `cec.events` append-only trigger, and the `stale_nonterminal_items` sentinel view.
 
 **The Phase 2 gate is open:** the one-task live slice — first real worker adapter activated under the B3 prerequisite (PID + process start-time sidecar; PID-only termination forbidden), one hand-authored schema-validated packet, evidence verification, GitHub/Railway observers, notification outbox, with CEC v2 still reversible.
+
+### Bootstrap criterion (locked 2026-07-23)
+
+**Phase 3 is not accepted unless CEC itself dispatched at least one of its own build tasks end-to-end** — packet authored by Scott or a planner, entered into the registry, dispatched by the kernel to a worker, leased, observed, result-claimed, and evidence-verified to `COMPLETE`. Phase 2 is the last phase whose build a human ferries to a model by hand. Rationale: harnesses exercise the paths we scripted; a real unscripted build task is the actual graduation exam, and running it first on the circuit's own next phase means any fumble is itself the highest-value bug report available, on a task trivially restartable by hand.
