@@ -99,3 +99,27 @@ No GitHub mutation by the machine (commit/PR of the produced diff is done by a h
 ---
 
 *Once Codex adjudicates §5 and Scott approves, step 1 is Codex's final hand-ferried round, and everything after step 2 is the machine's.*
+
+---
+
+## 7. Adjudicated resolutions (Codex memo, PR #2 comment; Claude reconciliation — 2026-07-23)
+
+Codex's verdict: **approve with amendments**. Claude concurs on all points, including one concession. The contract below supersedes §2–§5 where they differ.
+
+**Q1 — Worktree lifecycle: controller-owned, retention until ACK.** Controller creates the worktree pre-launch; records absolute path, base SHA, branch, and cleanup policy in durable event payload; destroys only after `COMPLETE` **and** notification acknowledgement (or a review-retention TTL) — never immediately on `COMPLETE`, because the diff/worktree is the review payload and deleting it early is evidence loss. The adapter receives a ready directory and owns no repo lifecycle.
+
+**Q2 — Path enforcement: layered; verifier is the binding authority.** Adapter restricts the worker's surface where the CLI supports it; the verifier is authoritative over the *parsed Git diff* — never string-prefix checks on model output. The verifier must reject: symlink/traversal escapes; renames whose old **or** new path leaves the allow-list; binary diffs outside the allow-list; submodule changes; and untracked/new files unless the packet explicitly allows new files in a named path. Positive allow-list is the rule; `forbidden_paths` is secondary.
+
+**Q3 — Result schema: extend, but never trust.** `files_changed: [string]` required for editing tasks, cross-checked against the parsed diff (mismatch = fail). Claim also carries `diff_sha256` and `test_output_sha256`; the verifier recomputes both. *The claim is an index into evidence, not evidence itself.*
+
+**Q4 — Timing (locked numbers for this packet):** `estimated_duration_seconds` 600; initial lease now+20m; initial `next_signal_deadline` **now+2m** (Codex tightened Claude's 5m — correct, since vanished-attention is the failure being killed); observation cadence ~15s with the signal deadline re-extended to now+2m only while pid+start-time identity matches; recovery ceiling 3, then `ESCALATE_RECOVERY`. Unavailable observer ⇒ hold/escalate per locked A1/B1; never redispatch from uncertainty.
+
+**Q5 — Controller shape: Claude's proposal rejected; Codex sustained.** Do **not** extend the Phase-2 one-task harness (a second one-off loop = migration debt where CEC historically failed). Build the **smallest generic service spine**: scan nonterminal/due items → enqueue per `work_item_id` through the existing partitioned queue → reconcile → execute only the actions D1 needs. No planner, dependency graph, resource-lock graph, multi-task routing, or GitHub/Railway mutation — generic spine, one-task capability. Claude concedes; this honors the locked build order better than the harness extension.
+
+**Packet JSON amendments (accepted verbatim):** add `files_changed` to the result schema with exact-match verification; add recomputed `artifact_sha256` fields for both artifacts; add `new_files_allowed: false` (the D1 test file already exists); keep the two-path positive allow-list exactly as drafted; verifier must prove the diff is against the pinned `starting_ref`; both runtime artifact paths are git-ignored runtime-only.
+
+**Standing scope boundary (reaffirmed):** the machine produces the D1 diff and evidence; it does **not** commit, push, open PRs, merge, or touch GitHub/Railway in this round. PR publication stays with Scott/Claude/Codex.
+
+### Build authorization (pending Scott's approval)
+
+Codex's final hand-ferried round builds exactly: worktree custody (create/retain/cleanup), code-change evidence verification (dual artifact + diff-vs-allow-list), editing-task result schema (`files_changed` + recomputed hashes), and the minimal generic service spine scoped to one seeded packet — then the D1 packet is seeded and **CEC dispatches its first build task itself**.
