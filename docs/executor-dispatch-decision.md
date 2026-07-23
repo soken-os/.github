@@ -489,3 +489,12 @@ Notes (no change made):
 **C2 — duplicate `source_event_id` with different content silently returns the prior transition** (same work item). Acceptable under the content-addressed-ID convention; worth an assert-on-mismatch in Phase 2 to catch a miscomputed ID early.
 
 **Acceptance path (target substrate):** on the Mac, re-run `reference/cec/phase0/run-proof.sh` (now also mints the proof receipt — the 2026-07-23 Appendix-D run predates the receipt mechanism), then run `reference/cec/phase1/run-shadow-tests.sh`. Both green on the Mac = Phase 1 accepted, Phase 2 gate opens.
+
+### Phase 1 acceptance record (2026-07-23)
+
+**Phase 1 PASSED on the target substrate** (Scott's Mac), run by Scott at head `e310f5e`:
+
+- Phase 0 proof re-run: 9 tests passed (incl. B2 decision rows); kill harness green — `continuation coverage=100%; orphan time=0; boundaries=5; elapsed=16.58s`; proof receipt minted against the current migration hash.
+- Phase 1 shadow suite through the receipt gate: **18 passed** — including the Postgres-backed proofs of atomic event+CAS commit, duplicate `source_event_id` no-op, stale-CAS rollback of the reserved event, the `cec.events` append-only trigger, and the `stale_nonterminal_items` sentinel view.
+
+**The Phase 2 gate is open:** the one-task live slice — first real worker adapter activated under the B3 prerequisite (PID + process start-time sidecar; PID-only termination forbidden), one hand-authored schema-validated packet, evidence verification, GitHub/Railway observers, notification outbox, with CEC v2 still reversible.
