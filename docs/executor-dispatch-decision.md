@@ -536,3 +536,17 @@ The sole packet is hand-authored and JSON-Schema validated as `LOW_RISK_TEST_REP
 Required acceptance line per worker:
 
 `controller_kills=2; continuation coverage=100%; orphan time=0; final=COMPLETE; notification=ACKNOWLEDGED`
+
+### Phase 2 acceptance record + independent review (Claude, 2026-07-23)
+
+**Phase 2 PASSED on the target substrate** (Scott's Mac), head `780c6c9`:
+
+- Phase 0: 9/9 · Phase 1: 19/19 · Phase 2: 27/27.
+- `SCRIPT` worker and **real `CLAUDE_CODE` worker** each completed the one-task packet after **two controller SIGKILLs** — one while the worker was alive mid-run (worker survived with pid + start-time identity intact), one after `RESULT_CLAIMED` before verification. Continuation coverage 100%, orphan time 0 throughout.
+- Durable real-worker row `phase2-claude_code-f378a2de` reached `COMPLETE` at 2026-07-23 14:04:42 UTC with `evidence_state.completion_verified=true`; notification delivered and acknowledged.
+
+**Independent review (this reviewer): RATIFIED.** Verified in code: B3 enforcement (`observe()` requires pid + raw `ps lstart` identity before reporting `RUNNING`; `terminate()` re-checks the pair before every signal; launch replay returns the durable handle instead of relaunching); C1 fix (no-increment hold advances the signal deadline, satisfying `continuation_deadlines_valid`); C2 fix (`EventContentMismatch` on content-divergent duplicate `source_event_id`); evidence verifier constrains the artifact inside the workspace, recomputes SHA-256, and requires passing-test content; the completion transition and outbox row commit in one transaction; the Phase 1 receipt binds to the spine's implementation hash so any spine edit forces re-proof. Pure suites re-run in review sandbox: 20/20.
+
+**D1 — note for Phase 3 (no change made):** `collect_result` stamps the claim's `lease_token`/`lease_epoch` from the *current* command built off the live row, not from the sidecar record of the run that actually produced the output. In this single-controller slice the two always coincide; once reclaim/redispatch paths go live, the claim must carry the epoch recorded at launch (from `<command_id>.process.json`) so a stale worker's late output is fenced by content, not by circumstance. Bind this into the Phase 3 scope alongside the bootstrap criterion.
+
+**This satisfies the live-slice milestone: the kernel drove a real Claude Code worker end-to-end — dispatch, lease, observe, claim, evidence-verify, notify — surviving controller death twice, with no human holding the loop.** Next: Phase 3, dispatched by CEC itself per the locked bootstrap criterion.
