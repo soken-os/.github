@@ -120,6 +120,6 @@ Codex's verdict: **approve with amendments**. Claude concurs on all points, incl
 
 **Standing scope boundary (reaffirmed):** the machine produces the D1 diff and evidence; it does **not** commit, push, open PRs, merge, or touch GitHub/Railway in this round. PR publication stays with Scott/Claude/Codex.
 
-### Build authorization (pending Scott's approval)
+### Build authorization — **APPROVED by Scott, 2026-07-23** (relayed via Claude session; recorded here as the authoritative record)
 
 Codex's final hand-ferried round builds exactly: worktree custody (create/retain/cleanup), code-change evidence verification (dual artifact + diff-vs-allow-list), editing-task result schema (`files_changed` + recomputed hashes), and the minimal generic service spine scoped to one seeded packet — then the D1 packet is seeded and **CEC dispatches its first build task itself**.
