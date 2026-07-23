@@ -63,8 +63,14 @@ class ShadowActionExecutor:
             increment = 1 if action.payload.get("increment_recovery_attempts") else 0
             if not increment:
                 # Current lease: record the observation, but do not fence or
-                # reassign a worker on a transient observer gap.
-                return self._base(item)
+                # reassign a worker on a transient observer gap. Advance the
+                # signal deadline so updated_at cannot violate the DB CHECK.
+                return self._base(
+                    item,
+                    next_signal_type="RETRY_OBSERVER",
+                    next_signal_key=action.idempotency_key,
+                    next_signal_deadline=now + timedelta(minutes=1),
+                )
             return self._base(
                 item,
                 custodian_type="CONTROLLER",

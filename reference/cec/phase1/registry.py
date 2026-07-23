@@ -17,6 +17,10 @@ class StaleTransition(RuntimeError):
     pass
 
 
+class EventContentMismatch(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class TransitionPatch:
     stage: str
@@ -31,6 +35,8 @@ class TransitionPatch:
     next_signal_deadline: datetime
     recovery_action: Mapping[str, Any]
     recovery_attempt_delta: int = 0
+    evidence_state: Mapping[str, Any] | None = None
+    completed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -113,7 +119,8 @@ class Registry:
         if reserved is None:
             existing = session.execute(
                 text(
-                    """SELECT id,work_item_id,to_version FROM cec.events
+                    """SELECT id,work_item_id,event_type,from_version,to_version,payload
+                    FROM cec.events
                     WHERE source=:source AND source_event_id=:source_event_id"""
                 ),
                 {"source": source, "source_event_id": source_event_id},
@@ -121,6 +128,15 @@ class Registry:
             if existing.work_item_id != work_item_id:
                 raise StaleTransition(
                     "source event ID already belongs to another work item"
+                )
+            if (
+                existing.event_type != event_type
+                or existing.from_version != expected_version
+                or existing.to_version != expected_version + 1
+                or existing.payload != dict(event_payload)
+            ):
+                raise EventContentMismatch(
+                    "duplicate source_event_id has different transition content"
                 )
             return TransitionResult(
                 False, True, work_item_id, existing.to_version, existing.id
@@ -139,6 +155,8 @@ class Registry:
                     next_signal_deadline=:next_signal_deadline,
                     recovery_action=CAST(:recovery_action AS jsonb),
                     recovery_attempts=recovery_attempts+:recovery_attempt_delta,
+                    evidence_state=COALESCE(CAST(:evidence_state AS jsonb),evidence_state),
+                    completed_at=COALESCE(:completed_at,completed_at),
                     updated_at=clock_timestamp(), version=version+1
                 WHERE id=:work_item_id AND version=:expected_version
                   AND recovery_attempts+:recovery_attempt_delta <= max_recovery_attempts
@@ -147,6 +165,11 @@ class Registry:
             {
                 **patch,
                 "recovery_action": json.dumps(patch["recovery_action"]),
+                "evidence_state": (
+                    json.dumps(patch["evidence_state"])
+                    if patch["evidence_state"] is not None
+                    else None
+                ),
                 "work_item_id": work_item_id,
                 "expected_version": expected_version,
             },

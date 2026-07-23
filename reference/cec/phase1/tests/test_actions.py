@@ -67,6 +67,8 @@ def test_current_lease_hold_does_not_fence_or_increment():
     assert patch.recovery_attempt_delta == 0
     assert patch.lease_epoch_delta == 0
     assert patch.custodian_type == "WORKER"
+    assert patch.next_signal_type == "RETRY_OBSERVER"
+    assert patch.next_signal_deadline > datetime.now(UTC)
 
 
 def test_escalation_does_not_increment_past_ceiling():

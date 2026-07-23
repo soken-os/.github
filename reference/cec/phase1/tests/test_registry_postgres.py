@@ -8,7 +8,12 @@ import psycopg
 import pytest
 
 from reference.cec.phase0.bootstrap import database_url, migrate as migrate_phase0
-from reference.cec.phase1.registry import Registry, StaleTransition, TransitionPatch
+from reference.cec.phase1.registry import (
+    EventContentMismatch,
+    Registry,
+    StaleTransition,
+    TransitionPatch,
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -128,6 +133,43 @@ def test_stale_cas_rolls_back_reserved_event():
                 (source_event_id,),
             ).fetchone()[0]
             == 0
+        )
+
+
+def test_duplicate_source_event_rejects_content_mismatch():
+    migrate_all()
+    work_item_id = f"phase1-{uuid4().hex[:8]}"
+    seed(work_item_id)
+    registry = Registry(database_url())
+    source_event_id = f"{work_item_id}:content-addressed"
+    registry.transition(
+        work_item_id=work_item_id,
+        expected_version=1,
+        source="test",
+        source_event_id=source_event_id,
+        event_type="HOLD_UNOBSERVABLE",
+        observed_at=datetime.now(UTC),
+        patch=patch(),
+        event_payload={"value": "original"},
+    )
+    with pytest.raises(EventContentMismatch):
+        registry.transition(
+            work_item_id=work_item_id,
+            expected_version=1,
+            source="test",
+            source_event_id=source_event_id,
+            event_type="HOLD_UNOBSERVABLE",
+            observed_at=datetime.now(UTC),
+            patch=patch(),
+            event_payload={"value": "different"},
+        )
+    with psycopg.connect(database_url()) as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM cec.events WHERE source_event_id=%s",
+                (source_event_id,),
+            ).fetchone()[0]
+            == 1
         )
 
 

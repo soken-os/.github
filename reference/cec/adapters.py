@@ -37,6 +37,7 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -54,7 +55,15 @@ from .contracts import (
 
 # --- Finding A4: secrets must never live in the durable work packet ----------
 
-_SECRET_HINTS = ("key", "token", "secret", "password", "passwd", "authorization", "bearer")
+_SECRET_HINTS = (
+    "key",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "authorization",
+    "bearer",
+)
 
 
 def assert_no_secrets_in_packet(packet: Mapping[str, Any]) -> None:
@@ -101,6 +110,46 @@ def _pid_alive(pid: int | None) -> bool:
     return True
 
 
+def _process_start_time(pid: int) -> str | None:
+    """Return the OS start-time identity used to defeat PID reuse.
+
+    `lstart` is available on both macOS and Linux. The raw OS value is stored
+    and compared; it is never parsed into a lossy timestamp.
+    """
+    completed = subprocess.run(
+        ["ps", "-o", "lstart=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    value = completed.stdout.strip()
+    return value or None
+
+
+def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _process_identity_matches(handle: WorkerHandle) -> bool:
+    if handle.pid is None:
+        return False
+    record = _read_json_or_none(
+        Path.cwd() / ".cec" / f"{handle.command_id}.process.json"
+    )
+    if not isinstance(record, dict):
+        return False
+    recorded_start = record.get("process_start_time")
+    return (
+        record.get("pid") == handle.pid
+        and isinstance(recorded_start, str)
+        and _pid_alive(handle.pid)
+        and _process_start_time(handle.pid) == recorded_start
+    )
+
+
 def _cec_dir(working_directory: Path, command_id: str) -> Path:
     d = working_directory / ".cec"
     d.mkdir(parents=True, exist_ok=True)
@@ -115,6 +164,7 @@ def _paths(command: WorkerCommand) -> dict[str, Path]:
         "stderr": d / f"{stem}.stderr",
         "exit": d / f"{stem}.exit",
         "pid": d / f"{stem}.pid",
+        "process": d / f"{stem}.process.json",
         "schema": d / f"{stem}.schema.json",
         "last": d / f"{stem}.last.json",  # Codex --output-last-message target
     }
@@ -149,13 +199,43 @@ class _SubprocessAdapterBase:
 
     def _parse_output(
         self, command: WorkerCommand, paths: dict[str, Path]
-    ) -> tuple[ClaimedStatus, str, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]] | None:
+    ) -> (
+        tuple[
+            ClaimedStatus,
+            str,
+            tuple[Mapping[str, Any], ...],
+            tuple[Mapping[str, Any], ...],
+        ]
+        | None
+    ):
         raise NotImplementedError
 
     async def launch(self, command: WorkerCommand) -> WorkerHandle:
         assert_no_secrets_in_packet(command.packet)  # A4
         paths = _paths(command)
         argv = self._argv(command, paths)
+
+        prior = _read_json_or_none(paths["process"])
+        if isinstance(prior, dict):
+            prior_pid = prior.get("pid")
+            prior_start = prior.get("process_start_time")
+            if (
+                isinstance(prior_pid, int)
+                and isinstance(prior_start, str)
+                and isinstance(prior.get("worker_instance_id"), str)
+                and isinstance(prior.get("started_at"), str)
+            ):
+                # A command ID is single-use even after its process exits.
+                # Returning the durable handle lets reconciliation collect the
+                # result (or escalate missing output) without relaunching it.
+                return WorkerHandle(
+                    command_id=command.command_id,
+                    work_item_id=command.work_item_id,
+                    worker_instance_id=str(prior["worker_instance_id"]),
+                    pid=prior_pid,
+                    session_id=None,
+                    started_at=datetime.fromisoformat(str(prior["started_at"])),
+                )
 
         stdout_f = paths["stdout"].open("wb")
         stderr_f = paths["stderr"].open("wb")
@@ -169,7 +249,27 @@ class _SubprocessAdapterBase:
             start_new_session=True,
             env=os.environ.copy(),
         )
+        process_start_time = _process_start_time(proc.pid)
+        if process_start_time is None:
+            proc.terminate()
+            await proc.wait()
+            stdout_f.close()
+            stderr_f.close()
+            raise RuntimeError(
+                "worker start time is unobservable; refusing PID-only custody"
+            )
+        worker_instance_id = f"{self.worker_kind.value.lower()}-{uuid4().hex[:12]}"
+        started_at = _now()
         paths["pid"].write_text(str(proc.pid), encoding="utf-8")
+        _atomic_json(
+            paths["process"],
+            {
+                "pid": proc.pid,
+                "process_start_time": process_start_time,
+                "worker_instance_id": worker_instance_id,
+                "started_at": started_at.isoformat(),
+            },
+        )
 
         # Best-effort reaper: record the exit code when the process finishes.
         async def _reap() -> None:
@@ -183,10 +283,10 @@ class _SubprocessAdapterBase:
         return WorkerHandle(
             command_id=command.command_id,
             work_item_id=command.work_item_id,
-            worker_instance_id=f"{self.worker_kind.value.lower()}-{uuid4().hex[:12]}",
+            worker_instance_id=worker_instance_id,
             pid=proc.pid,
             session_id=None,  # populated by collect_result if the CLI reports one
-            started_at=_now(),
+            started_at=started_at,
         )
 
     async def observe(self, handle: WorkerHandle) -> WorkerObservation:
@@ -194,7 +294,7 @@ class _SubprocessAdapterBase:
         # (working_directory is not on the handle; observe() is given enough by
         #  the controller in practice. Here we probe by pid + the exit sidecar
         #  the reaper writes; output presence is confirmed in collect_result.)
-        alive = _pid_alive(handle.pid)
+        alive = _process_identity_matches(handle)
         exit_code: int | None = None
         output_present = False
 
@@ -261,7 +361,7 @@ class _SubprocessAdapterBase:
             command_id=command.command_id,
             work_item_id=command.work_item_id,
             worker_instance_id=handle.worker_instance_id,
-            lease_token=command.lease_token,   # stamp the fence onto the claim
+            lease_token=command.lease_token,  # stamp the fence onto the claim
             lease_epoch=command.lease_epoch,
             status=status,
             summary=summary,
@@ -272,7 +372,7 @@ class _SubprocessAdapterBase:
     async def terminate(
         self, handle: WorkerHandle, *, reason: str, grace_seconds: int = 10
     ) -> None:
-        if not _pid_alive(handle.pid):
+        if not _process_identity_matches(handle):
             return
         assert handle.pid is not None
         try:
@@ -281,9 +381,11 @@ class _SubprocessAdapterBase:
         except (ProcessLookupError, PermissionError):
             return
         for _ in range(max(1, grace_seconds)):
-            if not _pid_alive(handle.pid):
+            if not _process_identity_matches(handle):
                 return
             await asyncio.sleep(1)
+        if not _process_identity_matches(handle):
+            return
         try:
             os.killpg(os.getpgid(handle.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
@@ -343,7 +445,9 @@ class ClaudeCodeAdapter(_SubprocessAdapterBase):
         structured = doc.get("structured_output")
         if not isinstance(structured, dict):
             return None
-        return _claim_from_structured(structured, fallback_summary=str(doc.get("result", "")))
+        return _claim_from_structured(
+            structured, fallback_summary=str(doc.get("result", ""))
+        )
 
 
 # --- Codex -------------------------------------------------------------------
@@ -415,7 +519,12 @@ class ScriptAdapter(_SubprocessAdapterBase):
 
 def _claim_from_structured(
     structured: Mapping[str, Any], *, fallback_summary: str
-) -> tuple[ClaimedStatus, str, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]] | None:
+) -> (
+    tuple[
+        ClaimedStatus, str, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]
+    ]
+    | None
+):
     """Map a schema-valid worker object to (status, summary, evidence, followups).
 
     Expected worker result_schema shape (the controller defines it per task):
@@ -434,6 +543,8 @@ def _claim_from_structured(
     if status is None:
         return None
     summary = str(structured.get("summary") or fallback_summary or "")
-    evidence = tuple(e for e in structured.get("evidence", []) if isinstance(e, Mapping))
+    evidence = tuple(
+        e for e in structured.get("evidence", []) if isinstance(e, Mapping)
+    )
     followups = tuple(f for f in structured.get("next", []) if isinstance(f, Mapping))
     return status, summary, evidence, followups

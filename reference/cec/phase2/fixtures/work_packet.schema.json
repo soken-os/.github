@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["packet_version", "task_class", "objective", "test_command", "artifact_relative_path", "allowed_tools"],
+  "properties": {
+    "packet_version": {"const": 1},
+    "task_class": {"const": "LOW_RISK_TEST_REPORT"},
+    "objective": {"type": "string", "minLength": 20},
+    "test_command": {"type": "array", "minItems": 3, "items": {"type": "string", "minLength": 1}},
+    "artifact_relative_path": {"type": "string", "pattern": "^runtime/[A-Za-z0-9._/-]+\\.txt$"},
+    "allowed_tools": {"type": "array", "items": {"enum": ["Bash"]}, "uniqueItems": true}
+  }
+}

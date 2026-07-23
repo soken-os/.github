@@ -502,3 +502,37 @@ Notes (no change made):
 ### Bootstrap criterion (locked 2026-07-23)
 
 **Phase 3 is not accepted unless CEC itself dispatched at least one of its own build tasks end-to-end** — packet authored by Scott or a planner, entered into the registry, dispatched by the kernel to a worker, leased, observed, result-claimed, and evidence-verified to `COMPLETE`. Phase 2 is the last phase whose build a human ferries to a model by hand. Rationale: harnesses exercise the paths we scripted; a real unscripted build task is the actual graduation exam, and running it first on the circuit's own next phase means any fumble is itself the highest-value bug report available, on a task trivially restartable by hand.
+
+---
+
+## Appendix F — Phase 2 one-task live-slice contract (2026-07-23)
+
+### Additive schema decision
+
+The locked `cec.work_items` schema is unchanged. Phase 2 adds only `cec.notification_outbox` through migration `003_notification_outbox.sql`. A completion-event trigger creates one durable notification row in the same transaction as the `COMPLETE` event and work-item CAS. Delivery writes a deterministic markdown file and moves the row `PENDING → DELIVERED`; explicit acknowledgement moves it `DELIVERED → ACKNOWLEDGED`. Retried file delivery is idempotent.
+
+### Binding findings
+
+- **B3 closed:** worker sidecars persist PID plus raw OS process start time. `observe()` requires the pair before reporting `RUNNING`. `terminate()` checks the pair before every signal, including escalation from `SIGTERM` to `SIGKILL`; PID-only termination is forbidden. A command ID is single-use, so controller replay returns its durable handle rather than relaunching an exited command.
+- **C1 closed:** a no-increment `HOLD_UNOBSERVABLE` preserves the worker fence but advances `next_signal_deadline`, so restamping `updated_at` satisfies `continuation_deadlines_valid`.
+- **C2 closed:** duplicate `(source, source_event_id)` now asserts equality of work item, event type, from/to versions, and payload. Different content raises `EventContentMismatch`; it never silently aliases the earlier event.
+
+### One task
+
+The sole packet is hand-authored and JSON-Schema validated as `LOW_RISK_TEST_REPORT`. It runs the read-only CEC controller/action unit tests and writes complete output to `reference/cec/phase2/runtime/live-slice-test-output.txt`. The deterministic `SCRIPT` adapter runs first as a dry run; live acceptance then invokes `claude -p --output-format json --json-schema` through `ClaudeCodeAdapter`. Neither path edits source, writes GitHub, or touches Railway.
+
+`RESULT_CLAIMED` is not completion. The kernel requires a typed file claim, constrains the path to the workspace, recomputes SHA-256, and verifies passing test output. Only then does it write `evidence_state.completion_verified=true` and transition to `COMPLETE`.
+
+### Acceptance criteria
+
+1. Current Phase-0 receipt and Phase-1 receipt both validate against their bound implementation hashes.
+2. Unit/Postgres suites pass, including B3, C1, C2, atomic completion/outbox, and evidence rejection tests.
+3. Both deterministic and real-Claude runs complete the same packet.
+4. In each run, the controller is killed after acknowledged worker custody while the worker remains alive and again after `RESULT_CLAIMED` before verification.
+5. During both deaths the registry retains custodian, next signal, deadline, and recovery action: continuation coverage 100%, orphan time zero.
+6. Final state is `COMPLETE` only after mechanical evidence verification.
+7. Completion notification is durably enqueued, delivered to markdown, and acknowledged.
+
+Required acceptance line per worker:
+
+`controller_kills=2; continuation coverage=100%; orphan time=0; final=COMPLETE; notification=ACKNOWLEDGED`

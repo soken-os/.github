@@ -9,3 +9,4 @@ cd "$repo_dir"
 "$python_bin" -m reference.cec.phase1.bootstrap
 CEC_RUN_POSTGRES_TESTS=1 "$python_bin" -m pytest -q \
   reference/cec/phase0/tests reference/cec/phase1/tests
+"$python_bin" -m reference.cec.phase1.gate
