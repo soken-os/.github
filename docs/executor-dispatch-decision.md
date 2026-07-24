@@ -550,3 +550,23 @@ Required acceptance line per worker:
 **D1 — note for Phase 3 (no change made):** `collect_result` stamps the claim's `lease_token`/`lease_epoch` from the *current* command built off the live row, not from the sidecar record of the run that actually produced the output. In this single-controller slice the two always coincide; once reclaim/redispatch paths go live, the claim must carry the epoch recorded at launch (from `<command_id>.process.json`) so a stale worker's late output is fenced by content, not by circumstance. Bind this into the Phase 3 scope alongside the bootstrap criterion.
 
 **This satisfies the live-slice milestone: the kernel drove a real Claude Code worker end-to-end — dispatch, lease, observe, claim, evidence-verify, notify — surviving controller death twice, with no human holding the loop.** Next: Phase 3, dispatched by CEC itself per the locked bootstrap criterion.
+
+---
+
+## Appendix G — Bootstrap acceptance record (2026-07-24): CEC dispatched its first build task
+
+**The locked bootstrap criterion is SATISFIED.** Work item `phase3-bootstrap-d1` (the D1 claim-fencing fix, per the adjudicated contract in `docs/phase3-bootstrap-packet.md`) was seeded into the registry on Scott's Mac and driven by the CEC service end-to-end with no human ferrying: worktree prepared at pinned `starting_ref` → real `CLAUDE_CODE` worker launched → observed under pid+start-time identity → typed claim collected → **mechanically verified** → `COMPLETE` at `2026-07-24 02:56:00 UTC` with `evidence_state.completion_verified=true` → notification `DELIVERED` to the bridge outbox.
+
+- Registry: stage `COMPLETE`, wait `NONE`, custodian `CONTROLLER/phase3-bootstrap-controller`, `lease_epoch=5` (the lease fenced over five turnovers mid-flight — the machine recovered through unscripted churn and still landed), `recovery_attempts=0` at completion.
+- Evidence: `files_changed` exactly the two allowed paths; test output `27 passed` (SHA-256 `72bc7be8…be9ed1`); diff SHA-256 `21fb0512…f33d`. The worker diff was **not** committed or pushed — publication remains human-gated, as contracted.
+- Run performed by Codex operating the Mac terminal; receipts re-minted first (Phase 0: 9 passed / coverage 100% / orphan 0; Phase 1: 19 passed).
+
+### Adjudications on the run report (Claude)
+
+**E5 — uncommitted verifier patch breaks evidence-chain reproducibility (must-fix before the next replay).** The run relied on a local stash (`cec-phase3-local-relative-artifact-verifier`, resolving repo-relative evidence paths). The verifier that ratified an accepted run **must exist in git history** — an acceptance produced by uncommitted code is not reproducible from the repo. Resolution: commit the stash as its own reviewed change (with a test) before any future replay; until then this acceptance stands on the registry/artifact evidence but carries this caveat explicitly.
+
+**F1 — pending notifications for terminal rows are not delivered after service restart (real defect, follow-up packet).** The scan loop skips terminal rows, so a `COMPLETE` item's undelivered notification requires a manual delivery call. Fix: a deterministic delivery tick over the notification outbox independent of work-item stage. Queued as a self-dispatched packet alongside E1 (symlink type-change hardening) and E4 (worktree-scoped Bash).
+
+**Publication path (decided):** the machine-produced D1 diff is applied verbatim from the diff artifact to a publication branch by Codex-at-the-terminal, pushed for Claude's content review on GitHub, and merged only after that review — machine produces, AI reviews, human approves. GitHub mutation stays outside the machine, per contract.
+
+**With this record, Phase 2's closing sentence is upgraded: the human is no longer the dispatcher for build work. Remaining Phase 3 scope (pull queue, dependencies, resource locks, routing, D1-followups E1/E4/E5/F1) flows through the lane the machine just proved.**
