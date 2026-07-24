@@ -138,3 +138,24 @@ Codex's DO-NOT-SHIP review was correct on both blockers; conceding cleanly.
 **D2 — new-file diff capture under confinement (OPEN, needs Mac-verified design).** Untracked new files still cannot enter the diff artifact without an object-store write, which the sandbox rightly denies. Candidate mechanism to verify *in isolation on the Mac before wiring in*: `git diff --no-ext-diff --no-index --src-prefix=a/ --dst-prefix=b/ /dev/null <file>` per sorted untracked file (a pure file diff, no `.git` writes), concatenated after the tracked `git diff <ref>`, run identically by worker and controller so `diff_sha256` still matches. **Process change to stop shipping blind:** sandbox-behavior mechanisms get a targeted Mac probe *before* being committed as the fix, not after.
 
 **Effect on P3:** with `GITDIR_ROOT`, the P3 worker no longer goes silent and the run should COMPLETE (evidence verifies via `files_changed` + tracked-diff sha match). Its diff artifact will omit its two new files until D2 lands — a publication-completeness gap, not a lane failure. The convergence run still validates the lane end-to-end; publishing P3's new files waits on D2 (or a rescope of P3 to existing files only).
+
+## P3 convergence run #2 — control plane converged; two non-crash gaps (Claude, 2026-07-24)
+
+Ran on merged `main` (`9026f36`). Gates green (Phase 0: 9, coverage 100%, orphan 0; Phase 1: 24/24). **Read carefully: this is progress, not a regression — severity decayed from crash-class to two contained, fixable gaps.**
+
+**What converged (the hard part):**
+- **G3 fixed** — the worker was NOT silent; it ran and produced a typed claim. The startup strangle is gone.
+- **G1/G2 fixed** — the controller did NOT crash; it contained everything and stayed up.
+- **Evidence integrity held** — the worker returned `status: needs_input` with a 0-byte diff and zero-hash placeholders, and the controller **refused to mark it COMPLETE** (`worker did not claim a completed result`). No false completion. This is the core thesis working.
+
+**Two remaining gaps, both non-crash:**
+
+- **G5 — controller wedged a non-done claim in VERIFYING (fixed this round).** The worker's `NEEDS_INPUT` ("I'm blocked, help") was pushed through evidence verification and rejected, leaving the row stuck in `VERIFYING`. Fix: the EXECUTING branch now routes `NEEDS_INPUT`/`FAILED` claims straight to the human recovery lane (`_reclaim_to_recovery`), and a `CodeEvidenceRejected` in the VERIFYING branch reclaims instead of raising (which had wedged the row under the G2 catch). Regression tests added. **The already-stuck row will unwedge on the next controller pass after this deploys.**
+
+- **G6 — sandbox still one grant too tight (open; needs Mac).** The worker hit `EPERM` on `/private/tmp/claude-501` — the Claude CLI's `/tmp/claude-<uid>` scratch/IPC dir, which `PROC_TMP` (`/var/folders/...`) doesn't cover. Codex couldn't reproduce it *outside* the sandbox (mkdir succeeded), confirming it's OUR profile denying it, not the OS. This is G3's sibling.
+
+### Strategic change: enumerate the sandbox's needed grants ONCE (stop the per-run whack-a-mole)
+
+G3, D2, and G6 are all the same shape: the P4 sandbox was built without a real editing worker exercising it, so we keep discovering one required grant per convergence run — an expensive round-trip each time. **Proposed one-time Mac discovery pass:** run a *complete* real worker turn under the shipped `worker.sb` with `log stream --predicate 'sender=="Sandbox"' --info` capturing **every** deny, producing the full list of paths a real `claude -p` turn needs. Then grant them all at once (each assessed for safety — e.g. `/tmp/claude-<uid>` is a narrow per-uid scratch dir, fine; the object store stays denied), and the sandbox is *correct* rather than iteratively approximated. This converts N convergence rounds into one discovery + one fix.
+
+**Next:** (1) merge G5; (2) one Mac discovery pass to enumerate all sandbox denials for a full worker turn (G6 + anything else); (3) grant the enumerated set; (4) re-run P3. Expected then: COMPLETE (diff artifact still omits new files pending D2, a publication-only gap).

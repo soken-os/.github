@@ -18,6 +18,7 @@ from psycopg.rows import dict_row
 
 from ..adapters import ClaudeCodeAdapter, ScriptAdapter
 from ..contracts import (
+    ClaimedStatus,
     WorkerCommand,
     WorkerHandle,
     WorkerKind,
@@ -27,7 +28,7 @@ from ..contracts import (
 from ..phase0.bootstrap import database_url
 from ..phase1.registry import Registry, TransitionPatch
 from ..phase2.notifications import deliver_pending
-from .evidence import verify_code_change_claim
+from .evidence import CodeEvidenceRejected, verify_code_change_claim
 from .packet import BOOTSTRAP_RESULT_SCHEMA, REPO_ROOT
 from .worktree import WorktreeRecord, create_worktree, write_unified_diff
 
@@ -379,6 +380,15 @@ class BootstrapController:
                         item, now, reason="WORKER_GONE_NO_RESULT"
                     )
                 return "RESULT_MISSING"
+            if claim.status is not ClaimedStatus.RESULT_CLAIMED:
+                # G5: the worker returned a claim but did NOT claim a completed
+                # result — NEEDS_INPUT ("I'm blocked, help") or FAILED. This is a
+                # legitimate worker outcome, not an evidence problem. Route it to
+                # the human recovery lane; forcing it through verification (below)
+                # would reject it and wedge the row in VERIFYING forever.
+                return self._reclaim_to_recovery(
+                    item, now, reason=f"WORKER_{claim.status.value}"
+                )
             record = self._worktree_record(item)
             write_unified_diff(record, Path(str(command.packet["diff_artifact_path"])))
             self._transition(
@@ -410,12 +420,21 @@ class BootstrapController:
                 return "CLAIM_UNOBSERVABLE"
             packet = dict(item["work_packet"])
             record = self._worktree_record(item)
-            evidence = verify_code_change_claim(
-                event["payload"]["claim"],
-                worktree=record.worktree_path,
-                starting_ref=str(packet["starting_ref"]),
-                packet=packet,
-            )
+            try:
+                evidence = verify_code_change_claim(
+                    event["payload"]["claim"],
+                    worktree=record.worktree_path,
+                    starting_ref=str(packet["starting_ref"]),
+                    packet=packet,
+                )
+            except CodeEvidenceRejected as exc:
+                # G5: a claimed-done result whose evidence does not verify (bad or
+                # missing artifacts, path escape, hash mismatch). Not a controller
+                # error — route to the human recovery lane instead of raising,
+                # which under the G2 catch would leave the row wedged in VERIFYING.
+                return self._reclaim_to_recovery(
+                    item, now, reason=f"EVIDENCE_REJECTED: {exc}"[:180]
+                )
             notification = (
                 f"# CEC bootstrap complete: {work_item_id}\n\n"
                 "The first self-dispatched build task completed with mechanical evidence.\n\n"

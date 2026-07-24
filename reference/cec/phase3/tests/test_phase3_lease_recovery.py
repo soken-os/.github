@@ -98,3 +98,36 @@ def test_run_scan_once_contains_a_raising_reconcile_g2():
     outcomes = ctrl.run_scan_once(Boom())
     # 'a' is contained as an ERROR outcome; 'b' still gets its turn.
     assert outcomes == [("a", "ERROR:RuntimeError"), ("b", "NO_ACTION")]
+
+
+# --- G5: NEEDS_INPUT / FAILED / rejected-evidence route to recovery, not wedge --
+
+
+def test_needs_input_reason_maps_to_recovery():
+    # The controller derives the reclaim reason from claim.status.value; a
+    # NEEDS_INPUT worker must land in the human recovery lane, never VERIFYING.
+    from reference.cec.contracts import ClaimedStatus
+
+    now = datetime.now(UTC)
+    c = _controller()
+    outcome = c._reclaim_to_recovery(
+        _item(stage="EXECUTING"), now, reason=f"WORKER_{ClaimedStatus.NEEDS_INPUT.value}"
+    )
+    assert outcome == "RECLAIMED:WORKER_NEEDS_INPUT"
+    event, patch, _payload = c.transitions[-1]
+    assert patch.stage == "PARKED"
+    assert patch.custodian_type == "HUMAN"
+
+
+def test_rejected_evidence_reason_maps_to_recovery():
+    now = datetime.now(UTC)
+    c = _controller()
+    outcome = c._reclaim_to_recovery(
+        _item(stage="VERIFYING", wait_reason="REVIEW"),
+        now,
+        reason="EVIDENCE_REJECTED: worker did not claim a completed result",
+    )
+    assert outcome.startswith("RECLAIMED:EVIDENCE_REJECTED")
+    _event, patch, _payload = c.transitions[-1]
+    assert patch.stage == "PARKED"
+    assert patch.next_signal_deadline > now  # continuation stays valid
