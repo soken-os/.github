@@ -481,6 +481,32 @@ def _canonical(path: Path) -> str:
     return os.path.realpath(str(path))
 
 
+def _worktree_gitdir(working_directory: Path) -> Path | None:
+    """The linked worktree's OWN gitdir (`.git/worktrees/<name>/`), or None.
+
+    Finding G3: a linked worktree's git operations (`git add -N`, and the
+    index-stat refresh a plain `git diff` performs) write `index`/`index.lock`
+    into this dir, which lives OUTSIDE the worktree subtree — so the P4 profile
+    denied them and silenced the worker. Granting this narrow dir fixes it.
+
+    Deliberately NOT the shared object store (`.git/objects/`): with intent-to-add
+    (`git add -N`) the diff needs only an index entry, never a blob, so the
+    worker can produce a complete diff yet still cannot commit content — only the
+    controller commits/publishes.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(working_directory), "rev-parse", "--absolute-git-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return Path(out) if out else None
+
+
 def sandbox_wrap(argv: list[str], working_directory: Path) -> list[str]:
     """Prefix argv with the worktree-confining sandbox when it is enforceable.
 
@@ -489,18 +515,24 @@ def sandbox_wrap(argv: list[str], working_directory: Path) -> list[str]:
     """
     if not sandbox_available():
         return argv
-    return [
-        _SANDBOX_EXEC,
-        "-f",
-        str(WORKER_SANDBOX_PROFILE),
+    params = [
         "-D",
         f"WORKTREE_ROOT={_canonical(working_directory)}",
         "-D",
         f"HOME_STATE={_canonical(_worker_cli_state_dir())}",
         "-D",
         f"PROC_TMP={_canonical(Path(tempfile.gettempdir()))}",
-        *argv,
     ]
+    gitdir = _worktree_gitdir(working_directory)
+    # GITDIR_ROOT is optional in the profile: a non-worktree cwd resolves its
+    # gitdir to the repo's own .git and needs no separate grant, so we point the
+    # param at the worktree subtree in that case to keep the rule a harmless
+    # no-op rather than granting anything extra.
+    params += [
+        "-D",
+        f"GITDIR_ROOT={_canonical(gitdir) if gitdir else _canonical(working_directory)}",
+    ]
+    return [_SANDBOX_EXEC, "-f", str(WORKER_SANDBOX_PROFILE), *params, *argv]
 
 
 # --- Claude Code -------------------------------------------------------------

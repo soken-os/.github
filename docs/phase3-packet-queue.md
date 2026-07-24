@@ -113,3 +113,16 @@ Two external Claude sessions plus this one reviewed the merged P4 confinement; a
 **SHIP / no blockers.** Codex reviewed PR #4 head `dd8f70c` and verified all five points against real Postgres: G1 heartbeat renews both lease and signal; G1 bounded by `3× estimated_duration_seconds`; G1 expired/no-result worker reclaims to `PARKED`; the reclaim row satisfies `continuation_deadlines_valid` (`lease_expires_at > updated_at`, `next_signal_deadline >= updated_at`) confirmed by direct DB check; G2 per-item exception containment holds. Source suite `36 passed, 7 skipped`. Two reviewers concur (Claude built + unit-tested; Codex ran + DB-checked).
 
 - **G4 — DB-backed expired-worker regression (tracked follow-up, deferred).** The shipped regression tests exercise transition construction and a stubbed controller, not a full DB-backed `reconcile_once` against an expired worker; Codex verified the constraint manually this round. Codify a Mac-only DB-backed test (seed an `EXECUTING` row with an expired lease → assert the old signal-only renewal is *rejected* by `continuation_deadlines_valid`, the new both-deadline renewal is *accepted*, and the reclaim `PARKED` row is accepted) alongside the other `*_postgres.py` suites. Non-blocking; do before the harness is leaned on for unattended multi-item runs.
+
+### G3 root-caused + fixed (Claude, 2026-07-24)
+
+Codex confirmed G3 on the Mac with an exact kernel denial: `deny file-write-create .../.git/worktrees/<name>/index.lock`. A linked worktree's git operations write `index`/`index.lock` into its *external* gitdir, outside `WORKTREE_ROOT`, so the P4 profile denied them and silenced the worker. (site-packages was *not* a natural failure — bytecode was cached — so per Codex's recommendation it is deliberately **not** granted.)
+
+**Fix (this round), scoped tighter than a blanket gitdir grant:**
+- `sandbox_wrap` adds a 4th `-D GITDIR_ROOT` = the worktree's own gitdir (`git rev-parse --absolute-git-dir`, realpath'd), and `worker.sb` grants that subtree. It grants **only** the worktree gitdir, **not** the shared object store (`.git/objects/`).
+- Diff capture uses **intent-to-add** (`git add -AN`) in `write_unified_diff`, and the packet objectives instruct the worker to run the same `git add -AN` before its diff (so `diff_sha256` still matches byte-for-byte). `-N` writes only an index entry, never a blob — so it needs just the gitdir, and the object-store denial means the worker still **cannot commit content**. This simultaneously closes the pre-existing new-file diff-completeness gap (untracked new files now appear in the artifact) while preserving "only the controller commits."
+- `worker-bash.md` limits section updated for honesty (gitdir now granted; object store still denied and *that* is what enforces the commit-custody property).
+
+**Deliberately NOT bundled:** E4-a (`CLAUDE_CONFIG_DIR` narrowing) touches the worker's auth/state and needs its own careful validation; E4-b/E4-c are hardening. Bundling them into the P3 convergence run would confound the signal. They remain the next hardening round. This fix is the minimal, targeted change to unblock P3.
+
+**Next:** review this G3 fix, then re-seed P3 — the convergence run (clean/doc-nit ⇒ through the spike, resume queue; crash-class ⇒ stop and dig).

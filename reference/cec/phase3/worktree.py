@@ -64,6 +64,21 @@ def remove_worktree(record: WorktreeRecord) -> None:
 
 def write_unified_diff(record: WorktreeRecord, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
+    # Intent-to-add so untracked NEW files appear in the diff (a plain
+    # `git diff <ref>` omits them, while evidence.files_changed counts them via
+    # `ls-files --others` — leaving the artifact incomplete). `-N` writes only an
+    # index entry, never a blob, so it needs just the worktree gitdir (granted to
+    # the sandboxed worker as GITDIR_ROOT, finding G3). The worker's objective
+    # runs the SAME `git add -AN` before its own diff, so its diff_sha256 matches
+    # this regeneration byte-for-byte. Gitignored runtime artifacts are excluded
+    # by -A honoring .gitignore.
+    subprocess.run(
+        ["git", "add", "-AN"],
+        cwd=record.worktree_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     completed = subprocess.run(
         [
             "git",

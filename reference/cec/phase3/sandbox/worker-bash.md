@@ -98,14 +98,17 @@ The tests skip off macOS.
   (`~/.claude` or `$CLAUDE_CONFIG_DIR`) and to `$TMPDIR` are permitted so a real
   turn can function. A worker that wanted to escape via those paths is not
   stopped; they are trusted, narrow locations, not an arbitrary-FS grant.
-- **git worktree gitdir is outside the boundary.** A linked worktree's real git
-  directory lives at `<main-repo>/.git/worktrees/<name>/`, *outside* the worktree
-  subtree, so commands that write there (`git commit`, `git add`) are denied
-  under this profile. The worker's contract does not require them: it edits
-  files, runs tests, writes artifacts (all inside the worktree), and produces the
-  diff with a read-only `git diff`. The controller, not the worker, commits.
-  A future task that needs in-worktree git writes must add that gitdir as a
-  fourth `-D`-parameterized allow rule.
+- **The worktree gitdir is granted (`GITDIR_ROOT`), but NOT the object store (G3).**
+  A linked worktree's real git directory lives at `<main-repo>/.git/worktrees/<name>/`,
+  *outside* the worktree subtree. Finding G3: the first sandboxed worker went
+  silent because `git` could not write `index.lock` there. `GITDIR_ROOT` (the
+  4th `-D` param, the worktree's own gitdir) is now granted, so index writes —
+  `git add -N` intent-to-add entries and the index-stat refresh a `git diff`
+  performs — succeed. The shared object store (`<main-repo>/.git/objects/`) is
+  **still denied**, so the worker can produce a complete diff via intent-to-add
+  but cannot write a blob or actually commit content. The controller, not the
+  worker, commits — that custody property is preserved by the object-store denial,
+  not by denying the gitdir wholesale.
 - **macOS only.** `sandbox-exec` is Apple's; off macOS `sandbox_wrap` is a
   no-op and the tests skip. The reference bridge runs on the Mac, where the
   confinement is enforced. `sandbox-exec` is formally deprecated by Apple but

@@ -22,6 +22,13 @@
 ;;   HOME_STATE     absolute, realpath'd state/cache dir for the worker CLI
 ;;                  (e.g. ~/.claude) so it can persist session data
 ;;   PROC_TMP       absolute, realpath'd per-process temp dir ($TMPDIR)
+;;   GITDIR_ROOT    absolute, realpath'd gitdir of the linked worktree
+;;                  (.git/worktrees/<name>/) so git index writes (index.lock,
+;;                  and `git add -N` intent-to-add entries) succeed. This is the
+;;                  worktree's OWN gitdir only -- NOT the shared object store
+;;                  (.git/objects/), so the worker can produce a complete diff
+;;                  via intent-to-add but still cannot write a blob / commit
+;;                  content; only the controller commits (finding G3).
 
 (allow default)
 
@@ -33,6 +40,7 @@
 (allow file-write* (subpath (param "WORKTREE_ROOT")))
 (allow file-write* (subpath (param "HOME_STATE")))
 (allow file-write* (subpath (param "PROC_TMP")))
+(allow file-write* (subpath (param "GITDIR_ROOT")))
 
 ;; Device nodes any process legitimately writes to (stdout/stderr redirect to
 ;; /dev/fd/*; /dev/null is ubiquitous). These are character devices, not a
