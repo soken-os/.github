@@ -616,6 +616,12 @@ class ClaudeCodeAdapter(_SubprocessAdapterBase):
 
     def _env(self, command: WorkerCommand, paths: dict[str, Path]) -> dict[str, str]:
         env = os.environ.copy()
+        # G8: mark that the worker runs inside the confinement, so a test suite it
+        # runs as its acceptance gate skips host-capability tests (ps, nested
+        # sandbox-exec) it physically cannot run — instead of failing them and
+        # never claiming a completed result.
+        if sandbox_available():
+            env["CEC_WORKER_SANDBOX"] = "1"
         if _routine_auth_fallback_enabled(command):
             # ROUTINE fallback: keep Claude Code on its existing authenticated
             # ~/.claude.json path, then grant only that file family via a

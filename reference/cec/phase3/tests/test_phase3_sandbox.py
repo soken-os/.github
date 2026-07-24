@@ -26,8 +26,15 @@ from reference.cec.adapters import (
 )
 from reference.cec.contracts import WorkerCommand, WorkerKind
 
+# The whole module is macOS-only: every test here references the sandbox-exec
+# machinery. The `requires_unsandboxed` marker, however, belongs ONLY on the
+# tests that actually *launch* sandbox-exec (the `_run_confined` tests) -- macOS
+# forbids nesting a sandbox inside a worker's own sandbox. The two argv/profile
+# composition tests below never exec sandbox-exec; they run fine inside G6 and
+# must stay as live controls (G8-1). Marking the module would silently skip them.
 pytestmark = pytest.mark.skipif(
-    sys.platform != "darwin", reason="worker Bash confinement uses macOS sandbox-exec"
+    sys.platform != "darwin",
+    reason="worker Bash confinement uses macOS sandbox-exec",
 )
 
 
@@ -116,6 +123,7 @@ def confinement(tmp_path):
     )
 
 
+@pytest.mark.requires_unsandboxed  # launches sandbox-exec; can't nest in G6
 def test_worktree_rooted_write_succeeds(confinement):
     (
         worktree,
@@ -147,6 +155,7 @@ def test_worktree_rooted_write_succeeds(confinement):
         assert fh.read().strip() == "confined"
 
 
+@pytest.mark.requires_unsandboxed  # launches sandbox-exec; can't nest in G6
 def test_out_of_worktree_write_fails(confinement):
     (
         worktree,
@@ -175,6 +184,7 @@ def test_out_of_worktree_write_fails(confinement):
     assert "not permitted" in result.stderr.lower()
 
 
+@pytest.mark.requires_unsandboxed  # launches sandbox-exec; can't nest in G6
 def test_claude_scratch_and_cache_writes_succeed(confinement):
     (
         worktree,
@@ -206,6 +216,7 @@ def test_claude_scratch_and_cache_writes_succeed(confinement):
     assert (claude_cache / "mcp-logs" / "log.jsonl").read_text().strip() == "ok"
 
 
+@pytest.mark.requires_unsandboxed  # launches sandbox-exec; can't nest in G6
 def test_git_objects_remain_denied(confinement):
     (
         worktree,
