@@ -61,7 +61,7 @@ BOOTSTRAP_RESULT_SCHEMA: dict[str, Any] = {
                     "kind": {"const": "file"},
                     "path": {"type": "string"},
                     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-                    "role": {"enum": ["test_output", "diff"]},
+                    "role": {"enum": ["test_output", "diff", "new_file"]},
                     "contains": {"type": "string"},
                 },
             },
@@ -211,9 +211,15 @@ def p4_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "diff artifact using exactly: git diff --no-ext-diff --src-prefix=a/ "
             "--dst-prefix=b/ <starting_ref> (from the worktree root) — the "
             "controller regenerates the diff with this exact command and your "
-            "diff_sha256 must match its bytes. Do not modify any file outside "
-            "allowed_paths. Return files_changed, test_output_sha256, diff_sha256, "
-            "and file evidence for both artifacts."
+            "diff_sha256 must match its bytes. The diff covers only tracked "
+            "changes; for EACH new file you create, additionally emit a file "
+            "evidence entry with role 'new_file', path set to the file's "
+            "repository-relative path, and sha256 set to the SHA-256 of that "
+            "file's exact bytes (`shasum -a 256 <path>` from the worktree root) — "
+            "the controller re-hashes each new file and your value must match. Do "
+            "not modify any file outside allowed_paths. Return files_changed, "
+            "test_output_sha256, diff_sha256, file evidence for both artifacts, and "
+            "a 'new_file' evidence entry per new file."
         ),
         "starting_ref": current_ref(repo_root),
         "allowed_paths": P4_ALLOWED_PATHS,
@@ -235,6 +241,7 @@ def p4_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "evidence": [
                 "file:artifact_path (passing test output)",
                 "file:diff_artifact_path (unified diff)",
+                "new_file: one byte-hash evidence entry per new file created",
             ],
         },
     }
@@ -291,9 +298,14 @@ def p3_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "exactly: git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "
             "<starting_ref> (from the worktree root) — the controller regenerates "
             "the diff with this exact command and your diff_sha256 must match its "
-            "bytes. Do not modify any file outside allowed_paths. Return "
-            "files_changed, test_output_sha256, diff_sha256, and file evidence for "
-            "both artifacts."
+            "bytes. The diff covers only tracked changes; for EACH new file you "
+            "create, additionally emit a file evidence entry with role 'new_file', "
+            "path set to the file's repository-relative path, and sha256 set to the "
+            "SHA-256 of that file's exact bytes (`shasum -a 256 <path>` from the "
+            "worktree root) — the controller re-hashes each new file and your value "
+            "must match. Do not modify any file outside allowed_paths. Return "
+            "files_changed, test_output_sha256, diff_sha256, file evidence for both "
+            "artifacts, and a 'new_file' evidence entry per new file."
         ),
         "starting_ref": current_ref(repo_root),
         "allowed_paths": P3_ALLOWED_PATHS,
@@ -315,6 +327,7 @@ def p3_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "evidence": [
                 "file:artifact_path (passing test output)",
                 "file:diff_artifact_path (unified diff)",
+                "new_file: one byte-hash evidence entry per new file created",
             ],
         },
     }

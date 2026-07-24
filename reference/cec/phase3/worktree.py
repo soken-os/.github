@@ -69,9 +69,9 @@ def write_unified_diff(record: WorktreeRecord, target: Path) -> None:
     # is all a diff's index-stat refresh needs. It does NOT include untracked new
     # files: intent-to-add (`git add -N`) still writes an empty blob to the shared
     # object store (Mac-verified), which the sandbox denies to preserve
-    # commit-custody. Capturing new files under confinement without object-store
-    # writes is finding D2 (open); until then a task that creates new files has an
-    # artifact covering only tracked changes.
+    # commit-custody. New files' bytes are therefore covered separately, as
+    # first-class per-file 'new_file' evidence hashed by verify_code_change_claim
+    # straight from the worktree (finding D2 / G8-3) — not by this diff artifact.
     completed = subprocess.run(
         [
             "git",
