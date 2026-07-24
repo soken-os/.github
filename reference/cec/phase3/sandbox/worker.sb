@@ -1,0 +1,44 @@
+(version 1)
+
+;; CEC worker Bash confinement (P4 / finding E4). NOT a general security
+;; sandbox -- see worker-bash.md for the full statement of scope and limits.
+;;
+;; Sole enforced boundary: filesystem *writes* are confined to the task
+;; worktree subtree, plus the two narrow, named locations a real headless turn
+;; must persist to (the worker CLI's own state dir and the per-process temp
+;; dir). Reads, process execution, and network are deliberately unconstrained,
+;; so a normal build/test turn behaves exactly as it does unconfined -- only its
+;; ability to write *outside* the worktree is removed.
+;;
+;; The sandbox is inherited by every child process, so it constrains the shell
+;; the worker CLI spawns for each Bash tool call, not just the CLI itself.
+;;
+;; Required parameters (supplied at launch via `sandbox-exec -D KEY=VALUE`).
+;; Every path MUST be passed symlink-resolved (realpath): the kernel evaluates
+;; the canonical path, so `/var/...` never matches a rule written against the
+;; real `/private/var/...` target. The adapter (ClaudeCodeAdapter._argv) and the
+;; tests both resolve before passing.
+;;   WORKTREE_ROOT  absolute, realpath'd path of the task worktree
+;;   HOME_STATE     absolute, realpath'd state/cache dir for the worker CLI
+;;                  (e.g. ~/.claude) so it can persist session data
+;;   PROC_TMP       absolute, realpath'd per-process temp dir ($TMPDIR)
+
+(allow default)
+
+;; Withdraw every write, then re-grant only the three named subtrees. In SBPL
+;; the last matching rule wins, so a path inside the worktree is denied by the
+;; blanket rule and then re-allowed here; a path anywhere else keeps the deny.
+(deny file-write*)
+
+(allow file-write* (subpath (param "WORKTREE_ROOT")))
+(allow file-write* (subpath (param "HOME_STATE")))
+(allow file-write* (subpath (param "PROC_TMP")))
+
+;; Device nodes any process legitimately writes to (stdout/stderr redirect to
+;; /dev/fd/*; /dev/null is ubiquitous). These are character devices, not a
+;; filesystem escape.
+(allow file-write*
+    (literal "/dev/null")
+    (literal "/dev/zero")
+    (literal "/dev/tty")
+    (subpath "/dev/fd"))
