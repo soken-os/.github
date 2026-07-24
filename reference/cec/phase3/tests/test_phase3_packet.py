@@ -1,7 +1,9 @@
 from reference.cec.phase3.packet import (
     ALLOWED_PATHS,
+    P3_ALLOWED_PATHS,
     P4_ALLOWED_PATHS,
     bootstrap_packet,
+    p3_packet,
     p4_packet,
 )
 
@@ -25,5 +27,15 @@ def test_p4_packet_locks_confinement_scope():
     assert "reference/cec/phase3/sandbox/worker.sb" in packet["allowed_paths"]
     assert "sandbox-exec" in packet["objective"]
     assert "outside the worktree fails" in packet["objective"]
+    assert packet["authority_class"] == "ROUTINE"
+
+
+def test_p3_packet_locks_delivery_scope():
+    packet = p3_packet()
+    assert packet["task_class"] == "CIRCUIT_BUILD"
+    assert packet["allowed_paths"] == P3_ALLOWED_PATHS
+    assert "reference/cec/phase3/service.py" in packet["allowed_paths"]
+    assert "deliver_pending" in packet["objective"]
+    assert "second scheduler" in packet["objective"]  # forbids a second lifecycle owner
     assert packet["authority_class"] == "ROUTINE"
 

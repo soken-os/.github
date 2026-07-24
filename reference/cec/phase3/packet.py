@@ -242,6 +242,86 @@ def p4_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     return packet
 
 
+# --- P3: deterministic notification delivery tick (F1) -----------------------
+
+P3_ALLOWED_PATHS = [
+    "reference/cec/phase3/service.py",
+    "reference/cec/phase3/controller.py",
+    "reference/cec/phase3/conftest.py",
+    "reference/cec/phase3/tests/test_phase3_delivery.py",
+]
+
+
+def p3_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Packet for the F1 fix: a stage-independent notification delivery tick.
+
+    The defect: pending notifications for terminal (COMPLETE) rows are only
+    delivered when that row is reconciled, but the scan skips terminal rows, so
+    after a service restart a COMPLETE item's notification stays PENDING until a
+    manual deliver_pending() call. The fix runs delivery every service cycle,
+    independent of work-item stage, under the single controller — NOT a second
+    scheduler (PR #3 adjudication: two lifecycle owners create race classes).
+    """
+    runtime = PHASE3_DIR / "runtime"
+    artifact = runtime / "p3-test-output.txt"
+    diff_artifact = runtime / "p3-change.diff"
+    packet = {
+        "task_class": "CIRCUIT_BUILD",
+        "objective": (
+            "Fix finding F1 (PR #3 queue P3): pending notification-outbox rows "
+            "must be delivered by a deterministic tick that runs every service "
+            "cycle, independent of work-item stage, so a COMPLETE row's PENDING "
+            "notification is delivered after a fresh service start without a "
+            "manual call. In reference/cec/phase3/service.py, call the existing "
+            "reference/cec/phase2/notifications.deliver_pending(bridge_outbox) "
+            "once per scan cycle in run_scan_once (or the service loop), using "
+            "the controller's bridge_outbox, under the same single controller — "
+            "do NOT add a second scheduler or launchd timer. deliver_pending is "
+            "already idempotent (it only touches PENDING rows and writes atomically); "
+            "delivery failures must not block reconciliation of work items. Also "
+            "add reference/cec/phase3/conftest.py setting norecursedirs to exclude "
+            "'worktrees' so pytest cannot double-collect test modules copied into "
+            "runtime worktrees. Add tests in "
+            "reference/cec/phase3/tests/test_phase3_delivery.py proving: a COMPLETE "
+            "work item with a PENDING notification and a freshly started service "
+            "(no reconcilable non-terminal rows) results in the notification "
+            "DELIVERED to the bridge outbox without the work item being touched or "
+            "reprocessed. Run the full non-Postgres suite and write complete output "
+            "to the artifact path. Write the unified diff to the diff artifact using "
+            "exactly: git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "
+            "<starting_ref> (from the worktree root) — the controller regenerates "
+            "the diff with this exact command and your diff_sha256 must match its "
+            "bytes. Do not modify any file outside allowed_paths. Return "
+            "files_changed, test_output_sha256, diff_sha256, and file evidence for "
+            "both artifacts."
+        ),
+        "starting_ref": current_ref(repo_root),
+        "allowed_paths": P3_ALLOWED_PATHS,
+        "forbidden_paths": FORBIDDEN_PATHS,
+        "allowed_tools": ["Read", "Edit", "Write", "Bash"],
+        "permission_mode": "bypassPermissions",
+        "new_files_allowed": True,
+        "artifact_path": str(artifact.resolve()),
+        "diff_artifact_path": str(diff_artifact.resolve()),
+        "estimated_duration_seconds": 600,
+        "priority_class": 60,
+        "authority_class": "ROUTINE",
+        "acceptance": {
+            "tests": (
+                "all non-Postgres suites pass, including the terminal-row "
+                "delivery-after-restart test"
+            ),
+            "diff": "touches only allowed_paths; new files only at the named paths",
+            "evidence": [
+                "file:artifact_path (passing test output)",
+                "file:diff_artifact_path (unified diff)",
+            ],
+        },
+    }
+    Draft202012Validator(PACKET_SCHEMA).validate(packet)
+    return packet
+
+
 def write_seed_packet(path: Path, repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     packet = bootstrap_packet(repo_root)
     path.parent.mkdir(parents=True, exist_ok=True)
