@@ -41,7 +41,7 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from .contracts import (
     ClaimedStatus,
@@ -264,10 +264,18 @@ class _SubprocessAdapterBase:
         _atomic_json(
             paths["process"],
             {
+                # D1: persist the command_id and the lease fence of the run that
+                # actually launched. collect_result stamps the claim from this
+                # launch record, so a stale worker's late output is fenced by the
+                # epoch it ran under, not by a command rebuilt off a since-
+                # renewed live row.
+                "command_id": command.command_id,
                 "pid": proc.pid,
                 "process_start_time": process_start_time,
                 "worker_instance_id": worker_instance_id,
                 "started_at": started_at.isoformat(),
+                "lease_token": str(command.lease_token),
+                "lease_epoch": command.lease_epoch,
             },
         )
 
@@ -353,6 +361,24 @@ class _SubprocessAdapterBase:
         self, handle: WorkerHandle, command: WorkerCommand
     ) -> WorkerResultClaim | None:
         paths = _paths(command)
+        # D1: stamp the claim's lease fence from the launch-time sidecar of the
+        # run that produced this output, never from the live `command` (which may
+        # have been rebuilt off a since-renewed row with a newer epoch). A
+        # missing, incomplete, or foreign-command_id record yields NO claim, so a
+        # stale worker's late output is fenced by content, not by circumstance.
+        record = _read_json_or_none(paths["process"])
+        if not isinstance(record, dict):
+            return None
+        if record.get("command_id") != command.command_id:
+            return None
+        recorded_token = record.get("lease_token")
+        recorded_epoch = record.get("lease_epoch")
+        if not isinstance(recorded_token, str) or not isinstance(recorded_epoch, int):
+            return None
+        try:
+            launch_lease_token = UUID(recorded_token)
+        except ValueError:
+            return None
         parsed = self._parse_output(command, paths)
         if parsed is None:
             return None  # empty/invalid output -> no claim (never a false DONE)
@@ -361,8 +387,8 @@ class _SubprocessAdapterBase:
             command_id=command.command_id,
             work_item_id=command.work_item_id,
             worker_instance_id=handle.worker_instance_id,
-            lease_token=command.lease_token,  # stamp the fence onto the claim
-            lease_epoch=command.lease_epoch,
+            lease_token=launch_lease_token,  # fence recorded at launch (D1)
+            lease_epoch=recorded_epoch,
             status=status,
             summary=summary,
             evidence=evidence,
@@ -427,10 +453,12 @@ class ClaudeCodeAdapter(_SubprocessAdapterBase):
         allowed = packet.get("allowed_tools")
         if isinstance(allowed, (list, tuple)) and allowed:
             argv += ["--allowedTools", ",".join(map(str, allowed))]
+        argv += ["--add-dir", str(command.working_directory)]
         # Unattended edits within the packet's sandbox; the packet's
         # allowed_paths/forbidden_paths are enforced by the controller via cwd
         # selection and post-hoc diff checks, not by the CLI.
-        argv += ["--permission-mode", "acceptEdits"]
+        permission_mode = str(packet.get("permission_mode") or "acceptEdits")
+        argv += ["--permission-mode", permission_mode]
         session_id = packet.get("resume_session_id")
         if isinstance(session_id, str) and session_id:
             argv += ["--resume", session_id]  # resume is a cache, never the truth
