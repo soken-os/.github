@@ -64,3 +64,7 @@ Gap-closers first, hardening second: P1 (always-on engine) and P2 (terminal-free
 - P5 lands before any packet above ROUTINE authority but does not block P1/P2 once P4 is in.
 
 **APPROVED by Scott, 2026-07-24** (relayed via Claude session; "locked decision"). The P4 packet is authored (`p4_packet()` in `reference/cec/phase3/packet.py`, seeded via `seed_p4.py`, work item `phase3-p4-bash-scoping`): the machine's second self-built change confines its own worker's Bash to the task worktree, with pre-named new-file paths so the verifier's exact-path allow-list stays enforceable, mechanism choice (allowed-tool patterns vs `sandbox-exec`) left to the worker per the adjudication, and acceptance tests required in both directions. It is, by design, the last packet whose worker carries `bypassPermissions`.
+
+### P4 acceptance record (2026-07-24)
+
+**P4 reached `COMPLETE` through the CEC lane** at 13:03:39 UTC — `lease_epoch=1`, `recovery_attempts=0` (no churn; contrast the bootstrap's five lease turnovers on an easier task). Evidence verified: exactly the four pre-named paths changed; test output `32 passed, 7 skipped` (SHA `f9680b69…`); diff SHA `51524bed…`. The worker **chose `sandbox-exec` and rejected allowed-tool patterns** with correct reasoning: patterns gate *prompting*, not execution, and are waived under `bypassPermissions` — so only an OS-level control actually retires the caveat. Completion notification row correctly `PENDING` (the known F1 defect; P3 next). Publication human-gated pending Claude's content review.
