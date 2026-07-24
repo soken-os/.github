@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
@@ -35,6 +36,16 @@ CONTROLLER_ID = "phase3-bootstrap-controller"
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+@contextmanager
+def _working_directory(path: Path):
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
 
 
 def _read_structured_output(command: WorkerCommand) -> Mapping[str, Any]:
@@ -105,6 +116,8 @@ class BootstrapController:
             rows = conn.execute(
                 """SELECT id FROM cec.work_items
                 WHERE stage NOT IN ('COMPLETE','CANCELLED')
+                AND task_class='CIRCUIT_BUILD'
+                AND work_packet ? 'starting_ref'
                 ORDER BY priority_class DESC, created_at ASC"""
             ).fetchall()
         return [str(row[0]) for row in rows]
@@ -281,7 +294,8 @@ class BootstrapController:
             if handle is None:
                 return "WORKER_UNOBSERVABLE"
             command = self._command(item)
-            observation = asyncio.run(self.adapter.observe(handle))
+            with _working_directory(command.working_directory):
+                observation = asyncio.run(self.adapter.observe(handle))
             if observation.state is WorkerProcessState.RUNNING:
                 self._transition(
                     item,
