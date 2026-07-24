@@ -79,15 +79,22 @@ def verify_code_change_claim(
     evidence = claim.get("evidence")
     if not isinstance(evidence, list):
         raise CodeEvidenceRejected("file evidence is required")
-    by_role = {
-        item.get("role"): item
+    file_items = [
+        item
         for item in evidence
         if isinstance(item, Mapping) and item.get("kind") == "file"
-    }
+    ]
+    by_role = {item.get("role"): item for item in file_items}
     test_item = by_role.get("test_output")
     diff_item = by_role.get("diff")
     if not isinstance(test_item, Mapping) or not isinstance(diff_item, Mapping):
         raise CodeEvidenceRejected("test_output and diff evidence are required")
+    # D2 / G8-3: each new (untracked) file the task creates must carry its own
+    # first-class byte hash. The diff artifact covers only tracked changes -- an
+    # intent-to-add would write to the shared object store, which the worker
+    # sandbox denies -- so without this, a new file's bytes are outside every
+    # verified hash and COMPLETE could be granted over unverified content.
+    new_file_items = [item for item in file_items if item.get("role") == "new_file"]
 
     test_path = _resolve_under(Path(str(test_item.get("path", ""))), worktree)
     diff_path = _resolve_under(Path(str(diff_item.get("path", ""))), worktree)
@@ -108,6 +115,25 @@ def verify_code_change_claim(
         raise CodeEvidenceRejected("diff touches paths outside allowed_paths")
     if new_files and not packet.get("new_files_allowed", False):
         raise CodeEvidenceRejected("new files are forbidden for this packet")
+    # Bind every new file's bytes into the verified evidence: the worker must
+    # declare a hash for each, the declared set must match the enumerated new
+    # files exactly (no missing, no extra), and each declared hash must match the
+    # bytes actually present in the worktree (controller-authoritative).
+    declared_new: dict[str, str] = {}
+    for item in new_file_items:
+        item_path = _resolve_under(Path(str(item.get("path", ""))), worktree)
+        rel = str(item_path.relative_to(worktree.resolve()))
+        if rel in declared_new:
+            raise CodeEvidenceRejected(f"duplicate new_file evidence for {rel}")
+        declared_new[rel] = str(item.get("sha256", ""))
+    if set(declared_new) != new_files:
+        raise CodeEvidenceRejected(
+            "new_file evidence does not match the set of new files in the diff"
+        )
+    for rel, declared_sha in declared_new.items():
+        actual_sha = _sha256(worktree / rel)
+        if actual_sha != declared_sha:
+            raise CodeEvidenceRejected(f"new file SHA-256 does not match: {rel}")
     forbidden = tuple(str(p) for p in packet.get("forbidden_paths", []))
     for path in changed:
         if path in forbidden or any(
@@ -137,4 +163,5 @@ def verify_code_change_claim(
         "test_output_sha256": test_digest,
         "diff_artifact": str(diff_path),
         "diff_sha256": diff_digest,
+        "new_files": {rel: declared_new[rel] for rel in sorted(declared_new)},
     }
