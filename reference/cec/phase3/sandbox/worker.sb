@@ -4,11 +4,11 @@
 ;; sandbox -- see worker-bash.md for the full statement of scope and limits.
 ;;
 ;; Sole enforced boundary: filesystem *writes* are confined to the task
-;; worktree subtree, plus the two narrow, named locations a real headless turn
-;; must persist to (the worker CLI's own state dir and the per-process temp
-;; dir). Reads, process execution, and network are deliberately unconstrained,
-;; so a normal build/test turn behaves exactly as it does unconfined -- only its
-;; ability to write *outside* the worktree is removed.
+;; worktree subtree, plus the narrow, named scratch/cache locations a real
+;; headless turn must persist to. Reads, process execution, and network are
+;; deliberately unconstrained, so a normal build/test turn behaves exactly as it
+;; does unconfined -- only its ability to write *source* outside the worktree is
+;; removed.
 ;;
 ;; The sandbox is inherited by every child process, so it constrains the shell
 ;; the worker CLI spawns for each Bash tool call, not just the CLI itself.
@@ -20,8 +20,15 @@
 ;; tests both resolve before passing.
 ;;   WORKTREE_ROOT  absolute, realpath'd path of the task worktree
 ;;   HOME_STATE     absolute, realpath'd state/cache dir for the worker CLI
-;;                  (e.g. ~/.claude) so it can persist session data
+;;                  (normally a per-worker .cec/claude-config dir, NOT the real
+;;                  ~/.claude.json family) so it can persist session data
 ;;   PROC_TMP       absolute, realpath'd per-process temp dir ($TMPDIR)
+;;   CLAUDE_TMP_ROOT absolute, realpath'd /private/tmp/claude-<uid> scratch root
+;;                  used by Claude Code's Bash tool harness
+;;   PRIVATE_TMP_ROOT absolute, realpath'd /private/tmp, used only for narrow
+;;                  zsh* and xcrun_db-* scratch files
+;;   CLAUDE_CACHE_ROOT absolute, realpath'd ~/Library/Caches/claude-cli-nodejs
+;;                  cache/log tree used by Claude Code MCP/plugin startup
 ;;   GITDIR_ROOT    absolute, realpath'd gitdir of the linked worktree
 ;;                  (.git/worktrees/<name>/) so git index writes (index.lock,
 ;;                  and `git add -N` intent-to-add entries) succeed. This is the
@@ -41,6 +48,17 @@
 (allow file-write* (subpath (param "HOME_STATE")))
 (allow file-write* (subpath (param "PROC_TMP")))
 (allow file-write* (subpath (param "GITDIR_ROOT")))
+
+;; Real Claude Code headless turns need ephemeral scratch/cache writes before
+;; they can execute worker Bash. These are intentionally NOT source grants:
+;; /private/tmp/claude-<uid> is the Bash harness scratch root; zsh* and
+;; xcrun_db-* are transient shell/toolchain files under /private/tmp; and the
+;; Claude CLI writes MCP/plugin cache logs under ~/Library/Caches/claude-cli-nodejs.
+(allow file-write* (subpath (param "CLAUDE_TMP_ROOT")))
+(allow file-write*
+    (regex #"^/private/tmp/zsh[^/]*$")
+    (regex #"^/private/tmp/xcrun_db-[^/]*$"))
+(allow file-write* (subpath (param "CLAUDE_CACHE_ROOT")))
 
 ;; Device nodes any process legitimately writes to (stdout/stderr redirect to
 ;; /dev/fd/*; /dev/null is ubiquitous). These are character devices, not a
