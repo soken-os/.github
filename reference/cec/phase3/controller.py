@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,8 @@ from .worktree import WorktreeRecord, create_worktree, write_unified_diff
 
 
 CONTROLLER_ID = "phase3-bootstrap-controller"
+
+_log = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -168,6 +171,39 @@ class BootstrapController:
             event_payload=dict(payload),
         )
 
+    def _reclaim_to_recovery(
+        self, item: Mapping[str, Any], now: datetime, *, reason: str
+    ) -> str:
+        """Fence an expired/silent worker's item into the human recovery lane.
+
+        A worker that consumed its full runtime budget silently, or vanished
+        without a result, is a symptom the machine cannot self-diagnose (worker
+        confinement, environment, a hung turn). Rather than blindly redispatch
+        and burn another budget, custody reverts to a human decision. The new
+        lease/signal deadlines are set in the future so the transition satisfies
+        continuation_deadlines_valid, and PARKED carries the full continuation
+        quartet (the invariant does not exempt PARKED).
+        """
+        self._transition(
+            item,
+            "WORKER_RECLAIMED",
+            self._patch(
+                item,
+                stage="PARKED",
+                wait_reason="HUMAN_DECISION",
+                custodian_type="HUMAN",
+                custodian_id="scott",
+                lease_token=str(uuid4()),
+                lease_epoch_delta=1,
+                lease_expires_at=now + timedelta(days=1),
+                next_signal_type="RECOVERY_DECISION",
+                next_signal_deadline=now + timedelta(hours=4),
+                recovery_action={"action": "REVIEW_RECLAIMED_WORKER", "reason": reason},
+            ),
+            {"reason": reason, "worker_terminated": True},
+        )
+        return f"RECLAIMED:{reason}"
+
     def _worktree_record(self, item: Mapping[str, Any]) -> WorktreeRecord:
         packet = dict(item["work_packet"])
         state = dict(item.get("external_refs") or {})
@@ -297,18 +333,51 @@ class BootstrapController:
             with _working_directory(command.working_directory):
                 observation = asyncio.run(self.adapter.observe(handle))
             if observation.state is WorkerProcessState.RUNNING:
-                self._transition(
-                    item,
-                    "WORKER_HEARTBEAT",
-                    self._patch(
-                        item,
-                        next_signal_deadline=now + timedelta(minutes=2),
-                    ),
-                    {"command_id": command.command_id, "state": observation.state.value},
+                # G1: renew BOTH the lease and the signal deadline from observed
+                # liveness (the locked "controller renews from liveness" model,
+                # A3/Q4). The previous path renewed only next_signal_deadline, so
+                # lease_expires_at fell into the past while the row stayed
+                # non-terminal; the next transition's updated_at then violated
+                # continuation_deadlines_valid and crashed the whole controller.
+                # Renewal is bounded: a live-but-silent worker past its runtime
+                # budget is fenced and reclaimed, never heartbeat-renewed forever.
+                budget_s = 3 * int(
+                    item["work_packet"].get("estimated_duration_seconds", 600)
                 )
-                return "WORKER_RUNNING"
+                elapsed_s = (now - handle.started_at).total_seconds()
+                if elapsed_s <= budget_s:
+                    self._transition(
+                        item,
+                        "WORKER_HEARTBEAT",
+                        self._patch(
+                            item,
+                            lease_expires_at=now + timedelta(minutes=20),
+                            next_signal_deadline=now + timedelta(minutes=2),
+                        ),
+                        {
+                            "command_id": command.command_id,
+                            "state": observation.state.value,
+                        },
+                    )
+                    return "WORKER_RUNNING"
+                with _working_directory(command.working_directory):
+                    asyncio.run(
+                        self.adapter.terminate(
+                            handle, reason="runtime budget exceeded"
+                        )
+                    )
+                return self._reclaim_to_recovery(
+                    item, now, reason="RUNTIME_BUDGET_EXCEEDED"
+                )
             claim = asyncio.run(self.adapter.collect_result(handle, command))
             if claim is None:
+                # No result and the worker is not running. If the lease has
+                # expired the worker is gone without producing evidence: reclaim
+                # to recovery rather than spinning on RESULT_MISSING forever.
+                if now >= item["lease_expires_at"]:
+                    return self._reclaim_to_recovery(
+                        item, now, reason="WORKER_GONE_NO_RESULT"
+                    )
                 return "RESULT_MISSING"
             record = self._worktree_record(item)
             write_unified_diff(record, Path(str(command.packet["diff_artifact_path"])))
@@ -377,5 +446,13 @@ class BootstrapController:
 def run_scan_once(controller: BootstrapController) -> list[tuple[str, str]]:
     outcomes: list[tuple[str, str]] = []
     for work_item_id in controller.due_items():
-        outcomes.append((work_item_id, controller.reconcile_once(work_item_id)))
+        # G2: a rejected transition (CHECK violation, stale CAS, adapter error)
+        # is contained to its own item. The DB constraint is a backstop, not
+        # control flow; one wedged item must never take down custody of every
+        # other item, so the loop logs and continues.
+        try:
+            outcomes.append((work_item_id, controller.reconcile_once(work_item_id)))
+        except Exception as exc:  # noqa: BLE001 - deliberate loop-level isolation
+            _log.exception("reconcile_once failed for %s", work_item_id)
+            outcomes.append((work_item_id, f"ERROR:{type(exc).__name__}"))
     return outcomes
