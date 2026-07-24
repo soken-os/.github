@@ -64,21 +64,14 @@ def remove_worktree(record: WorktreeRecord) -> None:
 
 def write_unified_diff(record: WorktreeRecord, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    # Intent-to-add so untracked NEW files appear in the diff (a plain
-    # `git diff <ref>` omits them, while evidence.files_changed counts them via
-    # `ls-files --others` — leaving the artifact incomplete). `-N` writes only an
-    # index entry, never a blob, so it needs just the worktree gitdir (granted to
-    # the sandboxed worker as GITDIR_ROOT, finding G3). The worker's objective
-    # runs the SAME `git add -AN` before its own diff, so its diff_sha256 matches
-    # this regeneration byte-for-byte. Gitignored runtime artifacts are excluded
-    # by -A honoring .gitignore.
-    subprocess.run(
-        ["git", "add", "-AN"],
-        cwd=record.worktree_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    # Plain `git diff <ref>` for tracked changes. This works inside the worker
+    # sandbox because GITDIR_ROOT grants the worktree's index (index.lock), which
+    # is all a diff's index-stat refresh needs. It does NOT include untracked new
+    # files: intent-to-add (`git add -N`) still writes an empty blob to the shared
+    # object store (Mac-verified), which the sandbox denies to preserve
+    # commit-custody. Capturing new files under confinement without object-store
+    # writes is finding D2 (open); until then a task that creates new files has an
+    # artifact covering only tracked changes.
     completed = subprocess.run(
         [
             "git",
