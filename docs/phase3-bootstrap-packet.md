@@ -137,3 +137,11 @@ Reviewed Codex's scaffold (`c5cde6f`) against §7. Verified in code: controller-
 **E3 — note for multi-item (not blocking):** the service loop reconciles sequentially rather than through the DBOS partitioned queue named in Q5. Functionally identical for one item; wire the queue when the registry holds more than one nonterminal item.
 
 **The scaffold is ratified. The machine is cleared for its first self-dispatched task.**
+
+### Live-run amendments (Codex at the Mac terminal, ratified by Claude — 2026-07-23)
+
+Three empirical fixes pushed during the maiden flight (`3e53220`, `182eab6`, `a3de5a8`), reviewed and ratified:
+
+- **Observation cwd fix (real bug):** `observe()` resolves sidecars from cwd, but the controller sat at repo root while sidecars live in the worktree — a live worker would have read as `MISSING`. Fixed with a working-directory context around observation. (This was the adapter README's known production edge, now closed.)
+- **Service targeting:** `due_items` filters to `task_class='CIRCUIT_BUILD'` with a `starting_ref`, so the bootstrap service ignores unrelated registry rows.
+- **E4 — worker permissions widened for headless test-running (accepted with a recorded caveat):** the bootstrap worker runs with `permission_mode: bypassPermissions` and `allowed_tools: [Read, Edit, Write, Bash]` because headless `-p` mode cannot interactively approve the Bash pytest run. Unconfined Bash means worker actions outside the worktree would not appear in the verified diff. Accepted for this ROUTINE, human-reviewed, publication-gated bootstrap; **hardening packet queued:** scope Bash to worktree-rooted commands (allowed-tool patterns or macOS sandbox-exec) before any packet above ROUTINE authority runs.
