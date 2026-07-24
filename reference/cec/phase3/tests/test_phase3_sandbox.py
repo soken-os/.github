@@ -31,12 +31,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run_confined(*, worktree, home_state, proc_tmp, shell_command):
+def _run_confined(*, worktree, home_state, proc_tmp, gitdir, shell_command):
     """Run one shell command under the shipped worker.sb profile.
 
     Mirrors exactly what ClaudeCodeAdapter._argv composes: the same profile and
-    the same three realpath'd `-D` params. Paths are resolved because the kernel
-    evaluates the canonical path (`/var/...` -> `/private/var/...`).
+    the same four realpath'd `-D` params (incl. GITDIR_ROOT, finding G3). Paths
+    are resolved because the kernel evaluates the canonical path
+    (`/var/...` -> `/private/var/...`).
     """
     return subprocess.run(
         [
@@ -49,6 +50,8 @@ def _run_confined(*, worktree, home_state, proc_tmp, shell_command):
             f"HOME_STATE={os.path.realpath(str(home_state))}",
             "-D",
             f"PROC_TMP={os.path.realpath(str(proc_tmp))}",
+            "-D",
+            f"GITDIR_ROOT={os.path.realpath(str(gitdir))}",
             "/bin/sh",
             "-c",
             shell_command,
@@ -60,25 +63,27 @@ def _run_confined(*, worktree, home_state, proc_tmp, shell_command):
 
 @pytest.fixture()
 def confinement(tmp_path):
-    """A worktree plus the two auxiliary write locations the profile grants,
-    each a distinct sibling so 'outside' is covered by no allow rule."""
+    """A worktree plus the auxiliary write locations the profile grants, each a
+    distinct sibling so 'outside' is covered by no allow rule."""
     worktree = tmp_path / "wt"
     home_state = tmp_path / "home"
     proc_tmp = tmp_path / "proctmp"
+    gitdir = tmp_path / "gitdir"
     outside = tmp_path / "outside"
-    for d in (worktree, home_state, proc_tmp, outside):
+    for d in (worktree, home_state, proc_tmp, gitdir, outside):
         d.mkdir()
     assert sandbox_available(), "shipped profile + sandbox-exec must be present on macOS"
-    return worktree, home_state, proc_tmp, outside
+    return worktree, home_state, proc_tmp, gitdir, outside
 
 
 def test_worktree_rooted_write_succeeds(confinement):
-    worktree, home_state, proc_tmp, _outside = confinement
+    worktree, home_state, proc_tmp, gitdir, _outside = confinement
     target = os.path.realpath(str(worktree)) + "/inside.txt"
     result = _run_confined(
         worktree=worktree,
         home_state=home_state,
         proc_tmp=proc_tmp,
+        gitdir=gitdir,
         # A nested mkdir + write, the shape a real build/test turn takes.
         shell_command=f"mkdir -p '{os.path.dirname(target)}/nested' "
         f"&& echo confined > '{target}'",
@@ -90,12 +95,13 @@ def test_worktree_rooted_write_succeeds(confinement):
 
 
 def test_out_of_worktree_write_fails(confinement):
-    worktree, home_state, proc_tmp, outside = confinement
+    worktree, home_state, proc_tmp, gitdir, outside = confinement
     target = os.path.realpath(str(outside)) + "/escape.txt"
     result = _run_confined(
         worktree=worktree,
         home_state=home_state,
         proc_tmp=proc_tmp,
+        gitdir=gitdir,
         shell_command=f"echo escape > '{target}'",
     )
     assert result.returncode != 0
@@ -129,6 +135,9 @@ def test_argv_wraps_claude_in_the_worktree_sandbox(tmp_path):
     d_params = [argv[i + 1] for i, a in enumerate(argv) if a == "-D"]
     assert any(p.startswith("HOME_STATE=") for p in d_params)
     assert any(p.startswith("PROC_TMP=") for p in d_params)
+    # G3: GITDIR_ROOT must be supplied, or the profile's rule references an
+    # undefined param and sandbox-exec rejects it ("expected pattern, got boolean").
+    assert any(p.startswith("GITDIR_ROOT=") for p in d_params)
     # The wrapped CLI turn survives intact after the sandbox prefix.
     assert "claude" in argv
     assert argv.index("claude") > argv.index("-f")
