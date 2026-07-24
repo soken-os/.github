@@ -431,7 +431,8 @@ class ClaudeCodeAdapter(_SubprocessAdapterBase):
         # Unattended edits within the packet's sandbox; the packet's
         # allowed_paths/forbidden_paths are enforced by the controller via cwd
         # selection and post-hoc diff checks, not by the CLI.
-        argv += ["--permission-mode", "acceptEdits"]
+        permission_mode = str(packet.get("permission_mode") or "acceptEdits")
+        argv += ["--permission-mode", permission_mode]
         session_id = packet.get("resume_session_id")
         if isinstance(session_id, str) and session_id:
             argv += ["--resume", session_id]  # resume is a cache, never the truth
