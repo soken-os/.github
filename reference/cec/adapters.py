@@ -38,6 +38,8 @@ import json
 import os
 import signal
 import subprocess
+import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -425,6 +427,82 @@ def _objective(packet: Mapping[str, Any]) -> str:
     return obj
 
 
+# --- E4: confine the worker's shell to its task worktree ---------------------
+#
+# The worker CLI runs each Bash tool call in a shell it spawns. Nothing in the
+# CLI's own permission model is a security boundary: allowed-tool patterns gate
+# prompting, not execution, and under `bypassPermissions` (the mode this packet
+# carries) they are waived entirely, so they cannot enforceably restrict Bash.
+# The smallest control that *is* enforceable on the Mac bridge is a macOS
+# sandbox-exec profile: we wrap the whole CLI process in it, and because the
+# kernel sandbox is inherited by every child, it binds the spawned shells too.
+# Its sole enforced boundary is that filesystem writes are confined to the task
+# worktree (plus the CLI's own state dir and the per-process temp dir). This
+# retires the blanket-bypassPermissions caveat (finding E4): the worker may
+# still edit freely, but it can no longer write outside its worktree. See
+# phase3/sandbox/worker.sb and phase3/sandbox/worker-bash.md for scope + limits.
+
+WORKER_SANDBOX_PROFILE = (
+    Path(__file__).resolve().parent / "phase3" / "sandbox" / "worker.sb"
+)
+_SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+
+
+def _worker_cli_state_dir() -> Path:
+    """The worker CLI's own writable state/cache dir.
+
+    Granted inside the sandbox so a real headless turn can still persist its
+    session while everything else outside the worktree stays read-only.
+    """
+    override = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(override) if override else Path.home() / ".claude"
+
+
+def sandbox_available() -> bool:
+    """True when worktree-write confinement is enforceable in this process.
+
+    Requires macOS (sandbox-exec is Apple's), the sandbox-exec binary, and the
+    shipped profile. The reference bridge runs on the Mac, where all three hold.
+    """
+    return (
+        sys.platform == "darwin"
+        and Path(_SANDBOX_EXEC).exists()
+        and WORKER_SANDBOX_PROFILE.exists()
+    )
+
+
+def _canonical(path: Path) -> str:
+    """Symlink-resolved absolute path.
+
+    The kernel sandbox evaluates the canonical path, so an un-resolved param
+    (e.g. `/var/...`) would never match a rule against its real `/private/var/...`
+    target. Every `-D` path must therefore be realpath'd before it is passed.
+    """
+    return os.path.realpath(str(path))
+
+
+def sandbox_wrap(argv: list[str], working_directory: Path) -> list[str]:
+    """Prefix argv with the worktree-confining sandbox when it is enforceable.
+
+    Off macOS (no sandbox-exec) the argv is returned unchanged; enforceability
+    can only be proven on the Mac, which is where the bridge runs.
+    """
+    if not sandbox_available():
+        return argv
+    return [
+        _SANDBOX_EXEC,
+        "-f",
+        str(WORKER_SANDBOX_PROFILE),
+        "-D",
+        f"WORKTREE_ROOT={_canonical(working_directory)}",
+        "-D",
+        f"HOME_STATE={_canonical(_worker_cli_state_dir())}",
+        "-D",
+        f"PROC_TMP={_canonical(Path(tempfile.gettempdir()))}",
+        *argv,
+    ]
+
+
 # --- Claude Code -------------------------------------------------------------
 
 
@@ -454,15 +532,18 @@ class ClaudeCodeAdapter(_SubprocessAdapterBase):
         if isinstance(allowed, (list, tuple)) and allowed:
             argv += ["--allowedTools", ",".join(map(str, allowed))]
         argv += ["--add-dir", str(command.working_directory)]
-        # Unattended edits within the packet's sandbox; the packet's
-        # allowed_paths/forbidden_paths are enforced by the controller via cwd
-        # selection and post-hoc diff checks, not by the CLI.
+        # Unattended edits within the packet's sandbox. allowed_paths /
+        # forbidden_paths are still enforced by the controller via post-hoc diff
+        # checks; the packet's permission_mode governs *editing* only. What the
+        # worker's shell may *write* is now confined to the worktree at the OS
+        # level by sandbox_wrap() below (finding E4): no longer left to the
+        # CLI's honor system, so bypassPermissions no longer means unbounded FS.
         permission_mode = str(packet.get("permission_mode") or "acceptEdits")
         argv += ["--permission-mode", permission_mode]
         session_id = packet.get("resume_session_id")
         if isinstance(session_id, str) and session_id:
             argv += ["--resume", session_id]  # resume is a cache, never the truth
-        return argv
+        return sandbox_wrap(argv, command.working_directory)
 
     def _parse_output(self, command: WorkerCommand, paths: dict[str, Path]):
         doc = _read_json_or_none(paths["stdout"])
