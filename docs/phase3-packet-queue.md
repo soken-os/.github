@@ -159,3 +159,16 @@ Ran on merged `main` (`9026f36`). Gates green (Phase 0: 9, coverage 100%, orphan
 G3, D2, and G6 are all the same shape: the P4 sandbox was built without a real editing worker exercising it, so we keep discovering one required grant per convergence run — an expensive round-trip each time. **Proposed one-time Mac discovery pass:** run a *complete* real worker turn under the shipped `worker.sb` with `log stream --predicate 'sender=="Sandbox"' --info` capturing **every** deny, producing the full list of paths a real `claude -p` turn needs. Then grant them all at once (each assessed for safety — e.g. `/tmp/claude-<uid>` is a narrow per-uid scratch dir, fine; the object store stays denied), and the sandbox is *correct* rather than iteratively approximated. This converts N convergence rounds into one discovery + one fix.
 
 **Next:** (1) merge G5; (2) one Mac discovery pass to enumerate all sandbox denials for a full worker turn (G6 + anything else); (3) grant the enumerated set; (4) re-run P3. Expected then: COMPLETE (diff artifact still omits new files pending D2, a publication-only gap).
+
+## G6 sandbox denial enumeration — one-pass discovery (2026-07-24)
+
+The one-time discovery pass worked: instead of one grant per convergence run, Codex captured the FULL set of paths a real `claude -p` turn needs under the shipped `worker.sb`. Key finding: the profile blocks *before any worker Bash runs* — the first hard blocker is the CLI's per-turn Bash scratch dir `/private/tmp/claude-<uid>/.../<session-id>`, which `PROC_TMP` (`/var/folders/...`) doesn't cover.
+
+**Full needed-write set, triaged by safety:**
+- **Grant (ephemeral, no persist-to-execute):** `/private/tmp/claude-<uid>` (Bash scratch — the first blocker), `/private/tmp/zsh*`, `/private/tmp/xcrun_db-*`, `~/Library/Caches/claude-cli-nodejs`.
+- **E4-a-coupled (config → potential write-to-execute via MCP-server defs):** `~/.claude.json` (+ `.lock`, `.tmp.*`). **Decision:** prefer redirecting `CLAUDE_CONFIG_DIR` to a disposable per-worker dir so the real `~/.claude.json` is *not* granted (closes the door and satisfies E4-a simultaneously); only if that breaks auth, grant the `.claude.json` family as a **ROUTINE-only** allowance (consistent with the P4 gate: nothing above ROUTINE until hardening). This folds G6 and E4-a into one fix.
+- **Ignore (OS-layer noise, non-blocking; turn completed despite them):** `mach-lookup com.apple.*`, `sysctl-read *`, `forbidden-exec-sugid`, `/dev/dtracehelper`. These are the Claude.app's own sandbox layer, not `worker.sb`.
+
+**Build ownership (inverted for this step):** the profile is SBPL that cannot be verified off the Mac, and Codex has a Mac-proven augmented profile. So **Codex writes the `worker.sb`/`sandbox_wrap` change and Claude reviews** it for scope/security (object store stays denied; out-of-worktree source boundary intact; prefer `CLAUDE_CONFIG_DIR` isolation over granting real config). The verifiable party holds the pen; the reviewer sets the guardrails. This is the fix for the "ship unverified sandbox change → bounced" cycle.
+
+**After G6 merges:** re-run P3. Expected COMPLETE (control plane already converged: G1/G2/G3/G5). Diff artifact still omits new files pending D2 (publication-only gap).
