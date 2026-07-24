@@ -42,6 +42,19 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _command_id(item: Mapping[str, Any]) -> str:
+    """A command identity UNIQUE per dispatch attempt.
+
+    The command_id names the worker's sidecar files (<command_id>.process.json,
+    .stdout, ...). A stable id let a requeued item's *new* dispatch find the
+    *old* attempt's sidecars and replay its historical result — so the item could
+    never actually retry. Binding the id to the lease epoch (which every
+    requeue/reclaim increments) guarantees each attempt gets a fresh sidecar
+    namespace, so a stale sidecar can never masquerade as the new worker.
+    """
+    return f"phase3-{item['id']}-epoch-{int(item['lease_epoch'])}-command"
+
+
 @contextmanager
 def _working_directory(path: Path):
     previous = Path.cwd()
@@ -274,7 +287,7 @@ class BootstrapController:
                 work_item_id=str(item["id"]),
                 starting_ref=str(packet["starting_ref"]),
             )
-            command_id = f"phase3-{work_item_id}-command"
+            command_id = _command_id(item)
             self._transition(
                 item,
                 "WORKTREE_PREPARED",
