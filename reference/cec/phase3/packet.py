@@ -99,6 +99,12 @@ PACKET_SCHEMA: dict[str, Any] = {
             "uniqueItems": True,
         },
         "forbidden_paths": {"type": "array", "items": {"type": "string"}},
+        "allowed_tools": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "uniqueItems": True,
+        },
         "new_files_allowed": {"const": False},
         "artifact_path": {"type": "string"},
         "diff_artifact_path": {"type": "string"},
@@ -141,6 +147,7 @@ def bootstrap_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "starting_ref": current_ref(repo_root),
         "allowed_paths": ALLOWED_PATHS,
         "forbidden_paths": FORBIDDEN_PATHS,
+        "allowed_tools": ["Read", "Edit", "Write", "Bash"],
         "new_files_allowed": False,
         "artifact_path": str(artifact.resolve()),
         "diff_artifact_path": str(diff_artifact.resolve()),
@@ -165,4 +172,3 @@ def write_seed_packet(path: Path, repo_root: Path = REPO_ROOT) -> dict[str, Any]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return packet
-
