@@ -106,7 +106,7 @@ PACKET_SCHEMA: dict[str, Any] = {
             "uniqueItems": True,
         },
         "permission_mode": {"const": "bypassPermissions"},
-        "new_files_allowed": {"const": False},
+        "new_files_allowed": {"type": "boolean"},
         "artifact_path": {"type": "string"},
         "diff_artifact_path": {"type": "string"},
         "estimated_duration_seconds": {"const": 600},
@@ -159,6 +159,79 @@ def bootstrap_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
         "acceptance": {
             "tests": "all non-Postgres suites pass, including the two D1 tests",
             "diff": "touches only allowed_paths and contains no new files",
+            "evidence": [
+                "file:artifact_path (passing test output)",
+                "file:diff_artifact_path (unified diff)",
+            ],
+        },
+    }
+    Draft202012Validator(PACKET_SCHEMA).validate(packet)
+    return packet
+
+
+# --- P4: worktree-scoped worker Bash (queue order locked in PR #3) -----------
+
+P4_ALLOWED_PATHS = [
+    "reference/cec/adapters.py",
+    "reference/cec/phase3/sandbox/worker-bash.md",
+    "reference/cec/phase3/sandbox/worker.sb",
+    "reference/cec/phase3/tests/test_phase3_sandbox.py",
+]
+
+
+def p4_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Packet for the machine's second self-built change: confining its worker.
+
+    Per the PR #3 adjudication, V1 scope is the smallest enforceable control
+    that retires blanket permissioning for the worker's shell — not a general
+    sandbox. Mechanism choice (allowed-tool patterns vs macOS sandbox-exec) is
+    the worker's, because enforceability can only be proven on the Mac.
+    """
+    runtime = PHASE3_DIR / "runtime"
+    artifact = runtime / "p4-test-output.txt"
+    diff_artifact = runtime / "p4-change.diff"
+    packet = {
+        "task_class": "CIRCUIT_BUILD",
+        "objective": (
+            "Confine the CEC worker's Bash to its task worktree, retiring the "
+            "blanket bypassPermissions caveat (E4; PR #3 adjudication P4). Modify "
+            "ClaudeCodeAdapter._argv in reference/cec/adapters.py so the launched "
+            "worker's shell commands are constrained to worktree-rooted execution "
+            "using the smallest enforceable control: allowed-tool patterns if they "
+            "enforceably restrict Bash, otherwise a macOS sandbox-exec profile "
+            "written to reference/cec/phase3/sandbox/worker.sb. Document the chosen "
+            "mechanism and its known limits in "
+            "reference/cec/phase3/sandbox/worker-bash.md. Add tests in "
+            "reference/cec/phase3/tests/test_phase3_sandbox.py proving both "
+            "directions: (1) a worktree-rooted command run through the confinement "
+            "succeeds; (2) a write attempt outside the worktree fails. Do not "
+            "attempt a general security sandbox; do not change contracts.py, the "
+            "registry, or any gate. Run the full non-Postgres suite and write "
+            "complete output to the artifact path. Write the unified diff to the "
+            "diff artifact using exactly: git diff --no-ext-diff --src-prefix=a/ "
+            "--dst-prefix=b/ <starting_ref> (from the worktree root) — the "
+            "controller regenerates the diff with this exact command and your "
+            "diff_sha256 must match its bytes. Do not modify any file outside "
+            "allowed_paths. Return files_changed, test_output_sha256, diff_sha256, "
+            "and file evidence for both artifacts."
+        ),
+        "starting_ref": current_ref(repo_root),
+        "allowed_paths": P4_ALLOWED_PATHS,
+        "forbidden_paths": FORBIDDEN_PATHS,
+        "allowed_tools": ["Read", "Edit", "Write", "Bash"],
+        "permission_mode": "bypassPermissions",  # the last packet that carries this
+        "new_files_allowed": True,
+        "artifact_path": str(artifact.resolve()),
+        "diff_artifact_path": str(diff_artifact.resolve()),
+        "estimated_duration_seconds": 600,
+        "priority_class": 60,
+        "authority_class": "ROUTINE",
+        "acceptance": {
+            "tests": (
+                "all non-Postgres suites pass, including both confinement tests "
+                "(worktree command succeeds; out-of-worktree write fails)"
+            ),
+            "diff": "touches only allowed_paths; new files only at the named paths",
             "evidence": [
                 "file:artifact_path (passing test output)",
                 "file:diff_artifact_path (unified diff)",
