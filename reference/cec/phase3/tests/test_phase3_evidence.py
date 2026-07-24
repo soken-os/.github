@@ -56,6 +56,35 @@ def test_verifies_code_change_dual_artifacts(tmp_path):
     assert evidence["files_changed"] == ["allowed.txt"]
 
 
+def test_verifies_repo_relative_evidence_artifact_paths(tmp_path):
+    repo, base, target = _repo(tmp_path)
+    target.write_text("after\n", encoding="utf-8")
+    test_output = repo / "reference" / "cec" / "phase3" / "runtime" / "test.txt"
+    diff_artifact = repo / "reference" / "cec" / "phase3" / "runtime" / "change.diff"
+    test_output.parent.mkdir(parents=True)
+    test_output.write_text("2 passed in 0.01s\n", encoding="utf-8")
+    diff_artifact.write_text(_git(repo, "diff", base).stdout, encoding="utf-8")
+    claim = _claim(test_output, diff_artifact, ["allowed.txt"])
+    claim["evidence"][0]["path"] = "reference/cec/phase3/runtime/test.txt"
+    claim["evidence"][1]["path"] = "reference/cec/phase3/runtime/change.diff"
+
+    evidence = verify_code_change_claim(
+        claim,
+        worktree=repo,
+        starting_ref=base,
+        packet={
+            "allowed_paths": ["allowed.txt"],
+            "forbidden_paths": [],
+            "new_files_allowed": False,
+        },
+    )
+
+    assert evidence["completion_verified"] is True
+    assert evidence["test_output_artifact"].endswith(
+        "reference/cec/phase3/runtime/test.txt"
+    )
+
+
 def test_rejects_diff_outside_allow_list(tmp_path):
     repo, base, target = _repo(tmp_path)
     target.write_text("after\n", encoding="utf-8")
@@ -87,4 +116,3 @@ def test_rejects_new_files_when_forbidden(tmp_path):
             starting_ref=base,
             packet={"allowed_paths": ["new.txt"], "forbidden_paths": [], "new_files_allowed": False},
         )
-

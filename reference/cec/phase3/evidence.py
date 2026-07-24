@@ -17,6 +17,8 @@ def _sha256(path: Path) -> str:
 
 
 def _resolve_under(path: Path, root: Path) -> Path:
+    if not path.is_absolute():
+        path = root / path
     resolved = path.resolve()
     if not resolved.is_relative_to(root.resolve()):
         raise CodeEvidenceRejected(f"artifact escaped workspace: {path}")
