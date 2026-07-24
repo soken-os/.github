@@ -131,7 +131,10 @@ def bootstrap_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "carries the epoch recorded at launch even when the passed command has a "
             "newer epoch; (2) a claim from a sidecar with a mismatched command_id yields "
             "no claim. Run the full non-Postgres suite and write complete output to the "
-            "artifact path. Write the unified diff to the diff artifact. Do not modify "
+            "artifact path. Write the unified diff to the diff artifact using exactly: "
+            "git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ <starting_ref> "
+            "(run from the worktree root) — the controller regenerates the diff with "
+            "this exact command and your diff_sha256 must match its bytes. Do not modify "
             "any file outside allowed_paths. Return files_changed, test_output_sha256, "
             "diff_sha256, and file evidence for both artifacts."
         ),
