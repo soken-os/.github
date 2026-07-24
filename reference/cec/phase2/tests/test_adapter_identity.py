@@ -6,6 +6,8 @@ import sys
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
+
 from reference.cec import adapters
 from reference.cec.adapters import ScriptAdapter
 from reference.cec.contracts import (
@@ -23,6 +25,7 @@ def _handle(pid):
     )
 
 
+@pytest.mark.requires_unsandboxed  # uses ps / real process identity
 def test_observe_never_calls_pid_reuse_running(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     sidecars = tmp_path / ".cec"
@@ -44,6 +47,7 @@ def test_observe_never_calls_pid_reuse_running(tmp_path, monkeypatch):
     assert observation.state is WorkerProcessState.MISSING
 
 
+@pytest.mark.requires_unsandboxed  # uses ps / real process identity
 def test_terminate_refuses_mismatched_start_time(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     sidecars = tmp_path / ".cec"
@@ -67,6 +71,7 @@ def test_terminate_refuses_mismatched_start_time(tmp_path, monkeypatch):
     asyncio.run(ScriptAdapter().terminate(_handle(os.getpid()), reason="test"))
 
 
+@pytest.mark.requires_unsandboxed  # uses ps / real process identity
 def test_terminate_requires_and_accepts_matching_pid_start_pair(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     process = subprocess.Popen(

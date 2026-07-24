@@ -26,9 +26,16 @@ from reference.cec.adapters import (
 )
 from reference.cec.contracts import WorkerCommand, WorkerKind
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "darwin", reason="worker Bash confinement uses macOS sandbox-exec"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        sys.platform != "darwin",
+        reason="worker Bash confinement uses macOS sandbox-exec",
+    ),
+    # G8: these launch sandbox-exec, which macOS forbids nesting inside a worker's
+    # own sandbox. Skipped when the suite runs inside a confined worker; they run
+    # normally when the suite runs unsandboxed (dev / controller-side / CI).
+    pytest.mark.requires_unsandboxed,
+]
 
 
 def _run_confined(
