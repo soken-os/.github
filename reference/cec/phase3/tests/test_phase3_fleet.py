@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 from reference.cec.phase3.fleet import (
     CHARTERS,
     FINDING_SCHEMA,
-    FLEET_DIR,
+    FLEET_FINDINGS_DIR,
     PROGRAM_CEC_REVIEW,
     _findings_path,
     _review_objective,
@@ -83,7 +83,7 @@ def test_findings_paths_unique():
 
 def test_findings_paths_in_fleet_dir():
     for charter in CHARTERS:
-        assert _findings_path(charter["id"]).startswith(FLEET_DIR)
+        assert _findings_path(charter["id"]).startswith(FLEET_FINDINGS_DIR)
 
 
 def test_finding_schema_is_valid():
