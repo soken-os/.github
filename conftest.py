@@ -27,6 +27,14 @@ def pytest_configure(config):
         "requires_unsandboxed: test needs host capabilities (ps, sandbox-exec) "
         "unavailable inside a confined worker; skipped when CEC_WORKER_SANDBOX=1.",
     )
+    # Registered here too: the marker is declared in phase0/pyproject.toml, which
+    # is not read when the suite runs from the repo root, so a root-level run
+    # warned "Unknown pytest.mark.postgres" on three modules.
+    config.addinivalue_line(
+        "markers",
+        "postgres: requires the local Phase-0 Postgres substrate; self-skips "
+        "unless CEC_RUN_POSTGRES_TESTS=1 is set.",
+    )
 
 
 def pytest_collection_modifyitems(config, items):

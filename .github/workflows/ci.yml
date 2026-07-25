@@ -1,0 +1,104 @@
+name: CI
+
+# CEC's own machine gate. Until now every CEC proof was a human-run command --
+# my local run plus Codex on the Mac -- which sits badly with a system whose
+# whole thesis is "completion is evidence-verified, never claimed." This runs the
+# COMPLETE suite, Postgres tests included, on every PR.
+#
+# The Postgres tests are phase-gated by design: phase 1 refuses to run without a
+# phase-0 proof receipt, and phase 2 without a phase-1 receipt. So the job
+# reproduces the real proof chain rather than skipping past it. The Mac's
+# run-proof.sh / run-shadow-tests.sh are not reusable here (they hardcode
+# /opt/homebrew python and docker compose), but their STEPS are portable and are
+# reproduced below in the same order.
+#
+# Not yet gated: ruff / ruff format / mypy. The existing tree has 22 ruff
+# findings, 14 files needing format, and a mypy module-path collision. Adding
+# those gates now would land a red CI, so they are a separate cleanup -- see the
+# PR description. The test gate is the load-bearing one and it is green.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cec:
+    name: ci/cec
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Mirrors reference/cec/phase0/compose.yaml exactly -- same image and
+        # same role/database, so CI proves the substrate the Mac actually runs.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cec
+          POSTGRES_PASSWORD: cec-phase0-local-only
+          POSTGRES_DB: cec_phase0
+          POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cec -d cec_phase0"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      # Dev-only local credentials, identical to the compose file. database_url()
+      # additionally refuses any URL containing railway/sokenweb, so this job can
+      # never point at a product database.
+      CEC_PHASE0_DATABASE_URL: postgresql://cec:cec-phase0-local-only@127.0.0.1:5432/cec_phase0
+      # Opt-in required by the Postgres-marked tests; without it they self-skip
+      # and the gate would silently prove far less than it appears to.
+      CEC_RUN_POSTGRES_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: reference/cec/phase0/pyproject.toml
+
+      - name: Install dependencies
+        # phase0/pyproject.toml is the canonical dependency set (dbos, jsonschema,
+        # psycopg[binary], pytest) at the same pinned ranges the Mac installs.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e reference/cec/phase0
+
+      # --- Phase 0 proof: substrate + continuation invariant + kill harness ---
+      - name: Phase 0 — migrate registry
+        run: python -m reference.cec.phase0.bootstrap
+
+      - name: Phase 0 — invariant tests
+        run: python -m pytest -q reference/cec/phase0/tests
+
+      - name: Phase 0 — kill harness (crash at every boundary)
+        # Prints: continuation coverage=100%; orphan time=0; boundaries=5
+        run: python -m reference.cec.phase0.kill_harness
+
+      - name: Phase 0 — mint proof receipt
+        run: python -m reference.cec.phase0.gate
+
+      # --- Phase 1 proof: durable custody spine ---
+      - name: Phase 1 — migrate shadow registry
+        run: python -m reference.cec.phase1.bootstrap
+
+      - name: Phase 1 — custody + event-ledger tests
+        run: python -m pytest -q reference/cec/phase0/tests reference/cec/phase1/tests
+
+      - name: Phase 1 — mint proof receipt
+        run: python -m reference.cec.phase1.gate
+
+      # --- Everything, with the receipts in place so nothing self-skips ---
+      - name: Full CEC suite (Postgres tests included)
+        # The only expected skips are the macOS sandbox-exec tests, which cannot
+        # run on Linux; they are proven on the Mac.
+        run: python -m pytest reference/cec -q
