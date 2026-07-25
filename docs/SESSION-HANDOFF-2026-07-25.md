@@ -197,24 +197,53 @@ comment) proceeding to **install the observer and run the real two-outage
 Mac acceptance drill**, restoring the scheduler afterward. Watch for the
 result — this is the liveness drill gate closing.
 
+### CI flake diagnosis (found 2026-07-25, fixed in PR #20)
+
+**Root cause:** a timing bug in `test_phase3_multilane.py`'s own test
+harness, not in the CEC control plane. Each controller driver thread runs
+with a 300-second internal deadline (`time.time() + 300`), but
+`_drive_until_terminal` joined those threads with `thread.join(timeout=150)`
+— half the internal deadline. Under GitHub Actions' slower/more contended
+runners, a controller thread could still be legitimately working past the
+150s join window; `join()` returned anyway, the thread kept running in the
+background, and the test asserted on incomplete state — hence "poisoned lane
+should park, got EXECUTING."
+
+**Evidence:** confirmed via CI job logs on both failing runs — same failure
+shape both times (`test_a_failing_lane_does_not_stop_the_others`, "got
+EXECUTING"), at 154.53s and 124s respectively, both exceeding or approaching
+the 150s join window. PR #19 failing is the tell — it's a doc-only PR, so
+the flakiness was already on merged `main`'s test suite, not introduced by
+either PR.
+
+**Fix (PR #20):** raise `thread.join(timeout=)` from 150s to 330s (300s
+deadline + 30s buffer), and add hung-thread detection — if any driver thread
+is still alive after join, it surfaces as an explicit test error rather than
+silently asserting on partial results.
+
 ---
 
 ## 5. What's open right now
+
+**PR #20** (`soken-os/.github`) — fix for the CI flake above. One-file
+change, no CEC logic touched. Must merge first to unblock #18 and #19.
 
 **PR #18** (`soken-os/.github`) — `reference/cec/phase3/metrics.py`: a
 strictly read-only Executor roll-up (lead time, first-pass yield, estimate
 accuracy, park rate, custody churn, per-stage dwell), derived entirely from
 `work_items`/`events` with zero new instrumentation and zero writes. Answers
-Scott's metrics requirement. **Draft, CI was running last check** — go verify
-`ci/cec` status on it, and if green, it's ready for Codex review. Not yet
-reviewed by Codex. Tests include an explicit "writes nothing" check and a
-ground-truth check against the real Appendix-H P3 row (skips cleanly if that
-row isn't in the local registry).
+Scott's metrics requirement. **Draft, CI blocked by the flake above** — once
+#20 merges and #18 rebases, CI should pass. Not yet reviewed by Codex. Tests
+include an explicit "writes nothing" check and a ground-truth check against
+the real Appendix-H P3 row (skips cleanly if that row isn't in the local
+registry).
 
-**If you're picking this up fresh:** check PR #18's CI and review state first
-(`mcp__github__pull_request_read` with `method: get_check_runs` /
-`get_comments`), then decide whether to post a review-request comment (the
-established pattern — see §6) and give Scott a paste-to-Codex pointer.
+**PR #19** (`soken-os/.github`) — this handoff doc. Doc-only, also blocked
+by the flake.
+
+**If you're picking this up fresh:** check whether PR #20 has merged. If
+yes, rebase #18 and #19 and re-run CI. If #20's CI is still running, wait
+for it.
 
 ---
 
@@ -282,10 +311,14 @@ of:**
    live. Needs: commit/push the worker's diff, then prove a pre-existing
    `COMPLETE`/`PENDING` row becomes `DELIVERED` after a service restart
    without the work item being reprocessed.
-5. ⬜/🔄 **Liveness acceptance drill** (product side, PR #269) — Codex said
-   it's proceeding to run this now (two-outage drill, install + unload +
-   restore). Check for the result.
-6. ⬜ PR #18 (metrics) merged.
+5. ✅ **Liveness acceptance drill** (product side, PR #269) — passed. Mac
+   drill ran twice: outage 1 detected at 312s, scheduler recovered, outage 2
+   detected at 322s (still inside original cooldown). Both alarms produced
+   durable events and successful ntfy receipts with matching iMessage records.
+   No model was involved in detecting either outage. Scheduler and observer
+   both healthy post-drill, heartbeat advancing, alarm marker cleared and
+   re-armed.
+6. ⬜ PR #18 (metrics) merged — blocked on #20 (CI flake fix) merging first.
 7. ⬜ Lint cleanup on CEC (`ruff`/`ruff format`/`mypy` gates) — bounded
    follow-up Codex explicitly asked for after #14/#15 cleared. Not yet
    started. Tree had 22 ruff findings + 14 files needing format + a mypy
