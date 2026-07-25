@@ -69,11 +69,11 @@ def _row(work_item_id: str) -> dict:
 
 def _event_count(work_item_id: str) -> int:
     with psycopg.connect(database_url()) as conn:
-        return int(
-            conn.execute(
-                "SELECT count(*) FROM cec.events WHERE work_item_id=%s", (work_item_id,)
-            ).fetchone()[0]
-        )
+        row = conn.execute(
+            "SELECT count(*) FROM cec.events WHERE work_item_id=%s", (work_item_id,)
+        ).fetchone()
+        assert row is not None
+        return int(row[0])
 
 
 def _cleanup(*ids: str) -> None:

@@ -156,10 +156,12 @@ def run(worker: str) -> None:
     assert Path(notification["delivered_path"]).is_file()
     acknowledge(notification["id"], acknowledged_by="phase2-harness")
     with psycopg.connect(database_url()) as conn:
-        status = conn.execute(
+        row = conn.execute(
             "SELECT status FROM cec.notification_outbox WHERE id=%s",
             (notification["id"],),
-        ).fetchone()[0]
+        ).fetchone()
+        assert row is not None, "notification row vanished"
+        status = row[0]
     assert status == "ACKNOWLEDGED"
     print(
         f"worker={worker}; controller_kills=2; continuation coverage=100%; "

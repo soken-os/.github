@@ -201,9 +201,10 @@ class OneTaskController:
             return "COMMAND_ACKNOWLEDGED"
 
         if item["stage"] == "EXECUTING" and item["custodian_type"] == "WORKER":
-            handle = self._handle(item)
-            if handle is None:
+            observed_handle = self._handle(item)
+            if observed_handle is None:
                 return "WORKER_UNOBSERVABLE"
+            handle = observed_handle
             observation = asyncio.run(self.adapter.observe(handle))
             if observation.state is WorkerProcessState.RUNNING:
                 return "WORKER_RUNNING"

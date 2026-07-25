@@ -173,13 +173,13 @@ def _rows(lanes: list[str]) -> dict[str, dict]:
 def _dispatch_events(lane: str) -> int:
     """How many times this item was actually dispatched to a worker."""
     with psycopg.connect(database_url()) as conn:
-        return int(
-            conn.execute(
-                """SELECT count(*) FROM cec.events
-                WHERE work_item_id=%s AND event_type='WORKER_DISPATCHED'""",
-                (lane,),
-            ).fetchone()[0]
-        )
+        row = conn.execute(
+            """SELECT count(*) FROM cec.events
+            WHERE work_item_id=%s AND event_type='WORKER_DISPATCHED'""",
+            (lane,),
+        ).fetchone()
+        assert row is not None
+        return int(row[0])
 
 
 def _cleanup(lanes: list[str], worktree_root: Path) -> None:

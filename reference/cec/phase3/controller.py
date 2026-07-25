@@ -381,9 +381,10 @@ class BootstrapController:
             return "COMMAND_ACKNOWLEDGED"
 
         if item["stage"] == "EXECUTING" and item["custodian_type"] == "WORKER":
-            handle = self._handle(item)
-            if handle is None:
+            observed_handle = self._handle(item)
+            if observed_handle is None:
                 return "WORKER_UNOBSERVABLE"
+            handle = observed_handle
             command = self._command(item)
             with _working_directory(command.working_directory):
                 observation = asyncio.run(self.adapter.observe(handle))

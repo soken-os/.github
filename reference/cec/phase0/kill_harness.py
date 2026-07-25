@@ -63,9 +63,11 @@ def run_boundary(boundary: str, serial: int, run_id: str) -> None:
         assert second.returncode == 0
         assert_continuation()
         with psycopg.connect(database_url()) as conn:
-            stage = conn.execute(
+            row = conn.execute(
                 "SELECT stage FROM cec.work_items WHERE id=%s", (TASK_151_ID,)
-            ).fetchone()[0]
+            ).fetchone()
+            assert row is not None, "work item vanished"
+            stage = row[0]
         assert stage == "COMPLETE"
 
 
