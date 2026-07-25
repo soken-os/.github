@@ -15,14 +15,14 @@ These are pure-logic tests: no Postgres, no worker, no Mac.
 
 from __future__ import annotations
 
+from jsonschema import Draft202012Validator
+
 from reference.cec.phase3.packet import (
     PACKET_SCHEMA,
     PROGRAM_CEC,
     build_packet,
     p3_packet,
 )
-
-from jsonschema import Draft202012Validator
 
 
 class _ProgramScopedController:

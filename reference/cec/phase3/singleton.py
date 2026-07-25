@@ -23,9 +23,9 @@ import fcntl
 import hashlib
 import os
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 DEFAULT_LOCK_DIR = Path.home() / ".cec" / "locks"
 

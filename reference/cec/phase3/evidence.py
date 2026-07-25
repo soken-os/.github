@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 
 class CodeEvidenceRejected(RuntimeError):

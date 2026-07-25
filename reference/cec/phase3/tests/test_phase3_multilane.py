@@ -30,9 +30,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import subprocess
 import sys
-import random
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -229,7 +229,7 @@ def _drive_until_terminal(
                     return
                 # Jitter: identical scan cadences maximise serialization collisions.
                 time.sleep(0.2 + random.random() * 0.3)
-        except Exception as exc:  # surfaced as a failure, never swallowed
+        except Exception as exc:  # noqa: BLE001  # surfaced as a failure, never swallowed
             errors.append(f"{program}: {type(exc).__name__}: {exc}")
 
     threads = [
@@ -308,7 +308,7 @@ def test_no_lane_is_dispatched_by_two_controllers(lanes_running):
 
 def test_exactly_one_worker_launch_per_lane(lanes_running):
     """M4 under real concurrency: no lane was ever dispatched twice."""
-    lanes, _claimed, errors, _rows_, _worktree_root = lanes_running
+    lanes, _, errors, _, _ = lanes_running
     assert not errors, f"controller thread(s) raised: {errors}"
     for lane in lanes:
         dispatches = _dispatch_events(lane)

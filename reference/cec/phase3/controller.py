@@ -9,10 +9,11 @@ import logging
 import os
 import random
 import time
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
@@ -33,7 +34,6 @@ from ..phase2.notifications import deliver_pending
 from .evidence import CodeEvidenceRejected, verify_code_change_claim
 from .packet import BOOTSTRAP_RESULT_SCHEMA, PROGRAM_CEC, REPO_ROOT
 from .worktree import WorktreeRecord, create_worktree, write_unified_diff
-
 
 CONTROLLER_ID = "phase3-bootstrap-controller"
 

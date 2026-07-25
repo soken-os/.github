@@ -81,7 +81,7 @@ jobs:
         run: python -m ruff format --check reference/cec/
 
       - name: Lint — mypy
-        run: python -m mypy reference/cec/ --explicit-package-bases
+        run: python -m mypy reference/cec/ --explicit-package-bases --config-file reference/cec/phase0/pyproject.toml
 
       # --- Phase 0 proof: substrate + continuation invariant + kill harness ---
       - name: Phase 0 — migrate registry

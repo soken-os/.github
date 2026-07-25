@@ -40,9 +40,10 @@ import signal
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from uuid import UUID, uuid4
 
 from .contracts import (
