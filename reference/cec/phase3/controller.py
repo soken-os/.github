@@ -29,7 +29,7 @@ from ..phase0.bootstrap import database_url
 from ..phase1.registry import Registry, TransitionPatch
 from ..phase2.notifications import deliver_pending
 from .evidence import CodeEvidenceRejected, verify_code_change_claim
-from .packet import BOOTSTRAP_RESULT_SCHEMA, REPO_ROOT
+from .packet import BOOTSTRAP_RESULT_SCHEMA, PROGRAM_CEC, REPO_ROOT
 from .worktree import WorktreeRecord, create_worktree, write_unified_diff
 
 
@@ -110,7 +110,12 @@ class BootstrapController:
         worktree_root: Path | None = None,
         bridge_outbox: Path | None = None,
         worker_kind: WorkerKind = WorkerKind.CLAUDE_CODE,
+        program: str = PROGRAM_CEC,
     ) -> None:
+        # One controller serves one program in one repo. Process-level separation
+        # is deliberate: a controller that dies takes only its own program's lane
+        # with it, and the cwd-bound worker sidecar path stays unambiguous.
+        self.program = program
         self.repo_root = repo_root.resolve()
         os.chdir(self.repo_root)
         self.worktree_root = (
@@ -129,13 +134,19 @@ class BootstrapController:
         )
 
     def due_items(self) -> list[str]:
+        # Program-scoped: one controller serves exactly one program. Without this
+        # filter, running a controller per program over the shared registry makes
+        # EVERY controller dispatch EVERY item — double-dispatch of the same work
+        # by different repos' controllers.
         with psycopg.connect(database_url()) as conn:
             rows = conn.execute(
                 """SELECT id FROM cec.work_items
                 WHERE stage NOT IN ('COMPLETE','CANCELLED')
                 AND task_class='CIRCUIT_BUILD'
+                AND program=%s
                 AND work_packet ? 'starting_ref'
-                ORDER BY priority_class DESC, created_at ASC"""
+                ORDER BY priority_class DESC, created_at ASC""",
+                (self.program,),
             ).fetchall()
         return [str(row[0]) for row in rows]
 
@@ -274,6 +285,12 @@ class BootstrapController:
 
     def reconcile_once(self, work_item_id: str) -> str:
         item = self.load_item(work_item_id)
+        # Fail closed on cross-program work: even if an item is handed to this
+        # controller directly (not via due_items), it must not act on another
+        # program's row -- its repo, worktree root, and sandbox all belong to a
+        # different project. Refusing is a no-op, never a state transition.
+        if str(item["program"]) != self.program:
+            return f"NOT_MY_PROGRAM:{item['program']}"
         now = _now()
         if item["stage"] == "COMPLETE":
             deliver_pending(self.bridge_outbox)

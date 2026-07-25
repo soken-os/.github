@@ -13,6 +13,12 @@ PHASE3_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PHASE3_DIR.parents[2]
 RUNTIME_DIR = PHASE3_DIR / "runtime"
 
+# Every work item carries a `program` (the schema column has no CHECK, so the
+# registry holds any number of them). One controller serves exactly one program
+# and refuses packets belonging to another, so N controllers over one registry
+# cannot double-dispatch or cross-wire each other's work.
+PROGRAM_CEC = "CEC"
+
 ALLOWED_PATHS = [
     "reference/cec/adapters.py",
     "reference/cec/phase2/tests/test_adapter_identity.py",
@@ -90,6 +96,11 @@ PACKET_SCHEMA: dict[str, Any] = {
     ],
     "properties": {
         "task_class": {"const": "CIRCUIT_BUILD"},
+        # Self-describing program: lets a packet be submitted as a file and
+        # routed without out-of-band context, and lets the serving controller
+        # refuse work that is not its own. Optional so packets authored before
+        # multi-program routing still validate.
+        "program": {"type": "string", "minLength": 1},
         "objective": {"type": "string", "minLength": 1},
         "starting_ref": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "allowed_paths": {
@@ -129,6 +140,7 @@ def bootstrap_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     diff_artifact = runtime / "bootstrap-change.diff"
     packet = {
         "task_class": "CIRCUIT_BUILD",
+        "program": PROGRAM_CEC,
         "objective": (
             "Fix finding D1 in reference/cec/adapters.py: collect_result must stamp "
             "WorkerResultClaim.lease_token and lease_epoch from the launch-time sidecar "
@@ -192,6 +204,7 @@ def p4_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     diff_artifact = runtime / "p4-change.diff"
     packet = {
         "task_class": "CIRCUIT_BUILD",
+        "program": PROGRAM_CEC,
         "objective": (
             "Confine the CEC worker's Bash to its task worktree, retiring the "
             "blanket bypassPermissions caveat (E4; PR #3 adjudication P4). Modify "
@@ -274,6 +287,7 @@ def p3_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     diff_artifact = runtime / "p3-change.diff"
     packet = {
         "task_class": "CIRCUIT_BUILD",
+        "program": PROGRAM_CEC,
         "objective": (
             "Fix finding F1 (PR #3 queue P3): pending notification-outbox rows "
             "must be delivered by a deterministic tick that runs every service "
@@ -324,6 +338,78 @@ def p3_packet(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "delivery-after-restart test"
             ),
             "diff": "touches only allowed_paths; new files only at the named paths",
+            "evidence": [
+                "file:artifact_path (passing test output)",
+                "file:diff_artifact_path (unified diff)",
+                "new_file: one byte-hash evidence entry per new file created",
+            ],
+        },
+    }
+    Draft202012Validator(PACKET_SCHEMA).validate(packet)
+    return packet
+
+
+# --- Generic packets: any program's build, no new code per project ----------
+
+
+def build_packet(
+    *,
+    program: str,
+    objective: str,
+    allowed_paths: list[str],
+    artifact_path: Path,
+    diff_artifact_path: Path,
+    repo_root: Path = REPO_ROOT,
+    starting_ref: str | None = None,
+    forbidden_paths: list[str] | None = None,
+    new_files_allowed: bool = True,
+    acceptance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a validated packet for ANY program's build task.
+
+    The phase-specific builders above (bootstrap/p4/p3) are CEC's own history;
+    this is the general entry point, so onboarding a new project is a call with
+    its repo + allowed paths rather than a new hand-authored function. The
+    objective carries the same evidence contract every packet must satisfy: the
+    controller regenerates the tracked diff and re-hashes each new file, so a
+    worker's claim is verified, never trusted.
+    """
+
+    packet = {
+        "task_class": "CIRCUIT_BUILD",
+        "program": program,
+        "objective": (
+            f"{objective.rstrip()}\n\n"
+            "Evidence contract (mechanically enforced by the controller): run the "
+            "project's full test gate and write complete output to the artifact "
+            "path. Write the unified diff to the diff artifact using exactly: "
+            "git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ <starting_ref> "
+            "(from the worktree root) — the controller regenerates the diff with "
+            "this exact command and your diff_sha256 must match its bytes. The "
+            "diff covers only tracked changes; for EACH new file you create, "
+            "additionally emit a file evidence entry with role 'new_file', path "
+            "set to the file's repository-relative path, and sha256 set to that "
+            "file's exact bytes (`shasum -a 256 <path>`) — the controller "
+            "re-hashes each new file and your value must match. Do not modify any "
+            "file outside allowed_paths. Return files_changed, "
+            "test_output_sha256, diff_sha256, file evidence for both artifacts, "
+            "and a 'new_file' evidence entry per new file."
+        ),
+        "starting_ref": starting_ref or current_ref(repo_root),
+        "allowed_paths": allowed_paths,
+        "forbidden_paths": forbidden_paths if forbidden_paths is not None else [],
+        "allowed_tools": ["Read", "Edit", "Write", "Bash"],
+        "permission_mode": "bypassPermissions",
+        "new_files_allowed": new_files_allowed,
+        "artifact_path": str(artifact_path),
+        "diff_artifact_path": str(diff_artifact_path),
+        "estimated_duration_seconds": 600,
+        "priority_class": 60,
+        "authority_class": "ROUTINE",
+        "acceptance": acceptance
+        or {
+            "tests": "the project's full test gate passes",
+            "diff": "touches only allowed_paths",
             "evidence": [
                 "file:artifact_path (passing test output)",
                 "file:diff_artifact_path (unified diff)",
