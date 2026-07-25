@@ -7,7 +7,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
-from reference.cec.phase0.bootstrap import database_url, migrate as migrate_phase0
+from reference.cec.phase0.bootstrap import database_url
+from reference.cec.phase0.bootstrap import migrate as migrate_phase0
 from reference.cec.phase1.registry import (
     EventContentMismatch,
     Registry,
@@ -188,9 +189,11 @@ def test_events_are_append_only():
         patch=patch(0),
         event_payload={},
     )
-    with psycopg.connect(database_url(), autocommit=True) as conn:
-        with pytest.raises(psycopg.errors.RaiseException):
-            conn.execute("DELETE FROM cec.events WHERE id=%s", (result.event_id,))
+    with (
+        psycopg.connect(database_url(), autocommit=True) as conn,
+        pytest.raises(psycopg.errors.RaiseException),
+    ):
+        conn.execute("DELETE FROM cec.events WHERE id=%s", (result.event_id,))
 
 
 def test_sentinel_view_reports_overdue_nonterminal_item():

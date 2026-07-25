@@ -33,7 +33,9 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     result.add_argument("--repo-root", default=str(Path.cwd()))
     result.add_argument("--bridge-outbox")
-    result.add_argument("--worker", choices=("CLAUDE_CODE", "SCRIPT"), default="CLAUDE_CODE")
+    result.add_argument(
+        "--worker", choices=("CLAUDE_CODE", "SCRIPT"), default="CLAUDE_CODE"
+    )
     result.add_argument("--interval-seconds", type=float, default=15.0)
     result.add_argument("--once", action="store_true")
     result.add_argument(

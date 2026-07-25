@@ -30,9 +30,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import subprocess
 import sys
-import random
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -173,13 +173,13 @@ def _rows(lanes: list[str]) -> dict[str, dict]:
 def _dispatch_events(lane: str) -> int:
     """How many times this item was actually dispatched to a worker."""
     with psycopg.connect(database_url()) as conn:
-        return int(
-            conn.execute(
-                """SELECT count(*) FROM cec.events
-                WHERE work_item_id=%s AND event_type='WORKER_DISPATCHED'""",
-                (lane,),
-            ).fetchone()[0]
-        )
+        row = conn.execute(
+            """SELECT count(*) FROM cec.events
+            WHERE work_item_id=%s AND event_type='WORKER_DISPATCHED'""",
+            (lane,),
+        ).fetchone()
+        assert row is not None
+        return int(row[0])
 
 
 def _cleanup(lanes: list[str], worktree_root: Path) -> None:
@@ -208,15 +208,19 @@ def _cleanup(lanes: list[str], worktree_root: Path) -> None:
         )
 
 
-def _drive_until_terminal(controllers: dict, lanes: list[str], claimed: dict, errors: list):
+def _drive_until_terminal(
+    controllers: dict, lanes: list[str], claimed: dict, errors: list
+):
     """Run every program's controller concurrently until its lanes settle."""
 
     def drive(program: str) -> None:
         deadline = time.time() + 300
+        scan_count = 0
         try:
             while time.time() < deadline:
-                for lane_id, _outcome in run_scan_once(controllers[program]):
-                    # Scoped to this run: residue from other runs is not evidence.
+                scan_count += 1
+                outcomes = run_scan_once(controllers[program])
+                for lane_id, outcome in outcomes:
                     if lane_id in lanes and lane_id not in claimed[program]:
                         claimed[program].append(lane_id)
                 rows = _rows(lanes)
@@ -225,19 +229,21 @@ def _drive_until_terminal(controllers: dict, lanes: list[str], claimed: dict, er
                     r["stage"] in {"COMPLETE", "PARKED", "CANCELLED"} for r in mine
                 ):
                     return
-                # Jitter: identical scan cadences maximise serialization collisions.
                 time.sleep(0.2 + random.random() * 0.3)
-        except Exception as exc:  # surfaced as a failure, never swallowed
+        except Exception as exc:  # noqa: BLE001  # surfaced as a failure, never swallowed
             errors.append(f"{program}: {type(exc).__name__}: {exc}")
 
     threads = [
-        threading.Thread(target=drive, args=(program,), daemon=True)
+        threading.Thread(target=drive, args=(program,), daemon=True, name=program)
         for program in controllers
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=150)
+        thread.join(timeout=330)
+    hung = [t.name for t in threads if t.is_alive()]
+    if hung:
+        errors.append(f"driver threads still alive after join: {hung}")
 
 
 @pytest.fixture(scope="module")
@@ -303,7 +309,7 @@ def test_no_lane_is_dispatched_by_two_controllers(lanes_running):
 
 def test_exactly_one_worker_launch_per_lane(lanes_running):
     """M4 under real concurrency: no lane was ever dispatched twice."""
-    lanes, _claimed, errors, _rows_, _worktree_root = lanes_running
+    lanes, _, errors, _, _ = lanes_running
     assert not errors, f"controller thread(s) raised: {errors}"
     for lane in lanes:
         dispatches = _dispatch_events(lane)

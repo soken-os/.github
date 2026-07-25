@@ -9,10 +9,11 @@ import logging
 import os
 import random
 import time
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
@@ -33,7 +34,6 @@ from ..phase2.notifications import deliver_pending
 from .evidence import CodeEvidenceRejected, verify_code_change_claim
 from .packet import BOOTSTRAP_RESULT_SCHEMA, PROGRAM_CEC, REPO_ROOT
 from .worktree import WorktreeRecord, create_worktree, write_unified_diff
-
 
 CONTROLLER_ID = "phase3-bootstrap-controller"
 
@@ -121,11 +121,18 @@ class BootstrapController:
         self.repo_root = repo_root.resolve()
         os.chdir(self.repo_root)
         self.worktree_root = (
-            worktree_root or self.repo_root / "reference" / "cec" / "phase3" / "worktrees"
+            worktree_root
+            or self.repo_root / "reference" / "cec" / "phase3" / "worktrees"
         ).resolve()
         self.bridge_outbox = (
             bridge_outbox
-            or self.repo_root / "reference" / "cec" / "phase3" / "runtime" / "bridge" / "outbox"
+            or self.repo_root
+            / "reference"
+            / "cec"
+            / "phase3"
+            / "runtime"
+            / "bridge"
+            / "outbox"
         ).resolve()
         self.worker_kind = worker_kind
         self.registry = Registry(database_url())
@@ -282,7 +289,13 @@ class BootstrapController:
                 None,
                 datetime.fromisoformat(str(doc["started_at"])),
             )
-        except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (
+            FileNotFoundError,
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
             return None
 
     def reconcile_once(self, work_item_id: str) -> str:
@@ -368,12 +381,16 @@ class BootstrapController:
             return "COMMAND_ACKNOWLEDGED"
 
         if item["stage"] == "EXECUTING" and item["custodian_type"] == "WORKER":
-            handle = self._handle(item)
-            if handle is None:
+            observed_handle = self._handle(item)
+            if observed_handle is None:
                 return "WORKER_UNOBSERVABLE"
+            handle = observed_handle
             command = self._command(item)
-            with _working_directory(command.working_directory):
-                observation = asyncio.run(self.adapter.observe(handle))
+            observation = asyncio.run(
+                self.adapter.observe(
+                    handle, working_directory=command.working_directory
+                )
+            )
             if observation.state is WorkerProcessState.RUNNING:
                 # G1: renew BOTH the lease and the signal deadline from observed
                 # liveness (the locked "controller renews from liveness" model,
@@ -402,12 +419,13 @@ class BootstrapController:
                         },
                     )
                     return "WORKER_RUNNING"
-                with _working_directory(command.working_directory):
-                    asyncio.run(
-                        self.adapter.terminate(
-                            handle, reason="runtime budget exceeded"
-                        )
+                asyncio.run(
+                    self.adapter.terminate(
+                        handle,
+                        reason="runtime budget exceeded",
+                        working_directory=command.working_directory,
                     )
+                )
                 return self._reclaim_to_recovery(
                     item, now, reason="RUNTIME_BUDGET_EXCEEDED"
                 )
@@ -557,7 +575,9 @@ def _reconcile_with_serialization_retry(
                 raise
             # Jittered backoff so colliding controllers do not retry in lockstep
             # and re-collide on the same boundary.
-            time.sleep(_SERIALIZATION_BACKOFF_SECONDS * (attempt + 1) * (1 + random.random()))
+            time.sleep(
+                _SERIALIZATION_BACKOFF_SECONDS * (attempt + 1) * (1 + random.random())
+            )
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -570,7 +590,10 @@ def run_scan_once(controller: BootstrapController) -> list[tuple[str, str]]:
         # other item, so the loop logs and continues.
         try:
             outcomes.append(
-                (work_item_id, _reconcile_with_serialization_retry(controller, work_item_id))
+                (
+                    work_item_id,
+                    _reconcile_with_serialization_retry(controller, work_item_id),
+                )
             )
         except Exception as exc:  # noqa: BLE001 - deliberate loop-level isolation
             _log.exception("reconcile_once failed for %s", work_item_id)

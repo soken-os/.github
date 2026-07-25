@@ -22,19 +22,23 @@ from reference.cec.phase3.singleton import (
 
 
 def test_second_holder_of_the_same_program_is_refused(tmp_path):
-    with program_singleton("carlson-roofing", lock_dir=tmp_path):
-        with pytest.raises(ProgramAlreadyServed, match="carlson-roofing"):
-            with program_singleton("carlson-roofing", lock_dir=tmp_path):
-                pass
+    with (  # noqa: SIM117
+        program_singleton("carlson-roofing", lock_dir=tmp_path),
+        pytest.raises(ProgramAlreadyServed, match="carlson-roofing"),
+    ):
+        with program_singleton("carlson-roofing", lock_dir=tmp_path):
+            pass
 
 
 def test_different_programs_run_concurrently(tmp_path):
     # Scoping must not serialize unrelated programs -- the whole point of Option
     # B is that roofing and soken build at the same time.
-    with program_singleton("carlson-roofing", lock_dir=tmp_path):
-        with program_singleton("soken", lock_dir=tmp_path):
-            with program_singleton("field-capture", lock_dir=tmp_path):
-                pass
+    with (
+        program_singleton("carlson-roofing", lock_dir=tmp_path),
+        program_singleton("soken", lock_dir=tmp_path),
+        program_singleton("field-capture", lock_dir=tmp_path),
+    ):
+        pass
 
 
 def test_lock_is_released_for_the_next_owner(tmp_path):
@@ -52,9 +56,11 @@ def test_sanitized_names_that_would_collide_get_distinct_locks(tmp_path):
     starting the second controller is refused — an availability/orphan bug where
     a real program silently never gets served.
     """
-    with program_singleton("a/b", lock_dir=tmp_path):
-        with program_singleton("a?b", lock_dir=tmp_path):
-            pass
+    with (
+        program_singleton("a/b", lock_dir=tmp_path),
+        program_singleton("a?b", lock_dir=tmp_path),
+    ):
+        pass
     locks = sorted(p.name for p in tmp_path.glob("controller-*.lock"))
     assert len(locks) == 2, f"distinct programs shared a lock file: {locks}"
 
@@ -86,6 +92,7 @@ def test_lock_is_held_against_a_separate_os_process(tmp_path):
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            check=False,
         )
     assert "REFUSED" in completed.stdout, (
         f"a second OS process acquired the same program lock: "

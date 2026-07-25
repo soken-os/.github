@@ -15,14 +15,14 @@ These are pure-logic tests: no Postgres, no worker, no Mac.
 
 from __future__ import annotations
 
+from jsonschema import Draft202012Validator
+
 from reference.cec.phase3.packet import (
     PACKET_SCHEMA,
     PROGRAM_CEC,
     build_packet,
     p3_packet,
 )
-
-from jsonschema import Draft202012Validator
 
 
 class _ProgramScopedController:
@@ -120,9 +120,7 @@ def test_an_unconfigured_program_is_visibly_unserved() -> None:
         for item_id in _ProgramScopedController(program, rows).due_items()
     }
 
-    nonterminal = {
-        r["id"] for r in rows if r["stage"] not in {"COMPLETE", "CANCELLED"}
-    }
+    nonterminal = {r["id"] for r in rows if r["stage"] not in {"COMPLETE", "CANCELLED"}}
     assert "typo-1" in nonterminal - claimed, (
         "the typo'd row should be unclaimed by every configured controller"
     )

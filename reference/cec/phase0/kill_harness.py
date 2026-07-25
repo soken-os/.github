@@ -16,7 +16,6 @@ from .bootstrap import database_url, migrate
 from .fixture import TASK_151_ID
 from .workflow import BOUNDARIES
 
-
 CONTINUATION_QUERY = """
 SELECT stage, custodian_type, custodian_id, next_signal_type,
        next_signal_deadline, recovery_action
@@ -50,7 +49,9 @@ def run_boundary(boundary: str, serial: int, run_id: str) -> None:
             CEC_PHASE0_WORKFLOW_ID=f"task151-kill-{run_id}-{serial}-{boundary.lower()}",
         )
         first = subprocess.run(
-            [sys.executable, "-m", "reference.cec.phase0.runner"], env=env
+            [sys.executable, "-m", "reference.cec.phase0.runner"],
+            env=env,
+            check=False,
         )
         assert first.returncode < 0, (boundary, first.returncode)
         assert sentinel.read_text(encoding="utf-8") == boundary
@@ -58,14 +59,19 @@ def run_boundary(boundary: str, serial: int, run_id: str) -> None:
         # continuation fields: custodian, signal, deadline, recovery action.
         assert_continuation()
         second = subprocess.run(
-            [sys.executable, "-m", "reference.cec.phase0.runner"], env=env, timeout=30
+            [sys.executable, "-m", "reference.cec.phase0.runner"],
+            env=env,
+            timeout=30,
+            check=False,
         )
         assert second.returncode == 0
         assert_continuation()
         with psycopg.connect(database_url()) as conn:
-            stage = conn.execute(
+            row = conn.execute(
                 "SELECT stage FROM cec.work_items WHERE id=%s", (TASK_151_ID,)
-            ).fetchone()[0]
+            ).fetchone()
+            assert row is not None, "work item vanished"
+            stage = row[0]
         assert stage == "COMPLETE"
 
 

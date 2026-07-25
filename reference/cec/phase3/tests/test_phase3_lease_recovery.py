@@ -111,10 +111,12 @@ def test_needs_input_reason_maps_to_recovery():
     now = datetime.now(UTC)
     c = _controller()
     outcome = c._reclaim_to_recovery(
-        _item(stage="EXECUTING"), now, reason=f"WORKER_{ClaimedStatus.NEEDS_INPUT.value}"
+        _item(stage="EXECUTING"),
+        now,
+        reason=f"WORKER_{ClaimedStatus.NEEDS_INPUT.value}",
     )
     assert outcome == "RECLAIMED:WORKER_NEEDS_INPUT"
-    event, patch, _payload = c.transitions[-1]
+    _event, patch, _payload = c.transitions[-1]
     assert patch.stage == "PARKED"
     assert patch.custodian_type == "HUMAN"
 

@@ -52,7 +52,7 @@ def notify(notify_command: str | None, key: str, message: str) -> bool:
     if not notify_command:
         return False
     try:
-        subprocess.run(  # noqa: S603
+        subprocess.run(
             (*shlex.split(notify_command), key, message), check=True, timeout=30
         )
     except (OSError, subprocess.SubprocessError):

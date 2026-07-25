@@ -7,10 +7,11 @@ an identical action.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any
 
 from .contracts import WorkerObservation, WorkerProcessState, WorkerResultClaim
 

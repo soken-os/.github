@@ -56,8 +56,8 @@ from cec.contracts import WorkerCommand, WorkerKind
 from cec.adapters import ClaudeCodeAdapter
 
 adapter = ClaudeCodeAdapter()
-handle = await adapter.launch(command)      # command built by the controller
-obs = await adapter.observe(handle)         # poll from the reconcile loop
+handle = await adapter.launch(command)  # command built by the controller
+obs = await adapter.observe(handle)  # poll from the reconcile loop
 claim = await adapter.collect_result(handle, command)  # -> WorkerResultClaim | None
 ```
 

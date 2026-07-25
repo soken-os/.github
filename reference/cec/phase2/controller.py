@@ -6,9 +6,10 @@ import asyncio
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
@@ -201,10 +202,13 @@ class OneTaskController:
             return "COMMAND_ACKNOWLEDGED"
 
         if item["stage"] == "EXECUTING" and item["custodian_type"] == "WORKER":
-            handle = self._handle(item)
-            if handle is None:
+            observed_handle = self._handle(item)
+            if observed_handle is None:
                 return "WORKER_UNOBSERVABLE"
-            observation = asyncio.run(self.adapter.observe(handle))
+            handle = observed_handle
+            observation = asyncio.run(
+                self.adapter.observe(handle, working_directory=self.workspace)
+            )
             if observation.state is WorkerProcessState.RUNNING:
                 return "WORKER_RUNNING"
             command = self._command(item)

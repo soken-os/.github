@@ -26,11 +26,12 @@ Design rules that this interface encodes (do not "improve" them away):
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 
@@ -55,7 +56,7 @@ class ClaimedStatus(StrEnum):
 
 @dataclass(frozen=True)
 class WorkerCommand:
-    command_id: str                 # Content-addressed idempotency key.
+    command_id: str  # Content-addressed idempotency key.
     work_item_id: str
     worker_kind: WorkerKind
     lease_token: UUID

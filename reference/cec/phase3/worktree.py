@@ -87,4 +87,3 @@ def write_unified_diff(record: WorktreeRecord, target: Path) -> None:
         text=True,
     )
     target.write_text(completed.stdout, encoding="utf-8")
-

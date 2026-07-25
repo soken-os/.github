@@ -14,6 +14,7 @@ off macOS (enforceability can only be proven on the Mac, where the bridge runs).
 import os
 import subprocess
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -81,6 +82,7 @@ def _run_confined(
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
 
 
@@ -109,7 +111,9 @@ def confinement(tmp_path):
         outside,
     ):
         d.mkdir()
-    assert sandbox_available(), "shipped profile + sandbox-exec must be present on macOS"
+    assert sandbox_available(), (
+        "shipped profile + sandbox-exec must be present on macOS"
+    )
     return (
         worktree,
         home_state,
@@ -298,10 +302,10 @@ def test_routine_packets_use_generated_auth_fallback_profile(tmp_path):
     profile_path = argv[argv.index("-f") + 1]
 
     assert profile_path.endswith(".cec/worker-routine-auth.sb")
-    text = open(profile_path, encoding="utf-8").read()
+    text = Path(profile_path).read_text(encoding="utf-8")
     assert ".claude.json" in text
     assert ".claude/session-env" in text
-    base = open(WORKER_SANDBOX_PROFILE, encoding="utf-8").read()
+    base = WORKER_SANDBOX_PROFILE.read_text(encoding="utf-8")
     assert ".claude.json.lock" not in base
     assert ".claude\\.json\\.tmp" not in base
     assert ".claude/session-env" not in base

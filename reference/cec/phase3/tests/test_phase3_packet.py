@@ -38,4 +38,3 @@ def test_p3_packet_locks_delivery_scope():
     assert "deliver_pending" in packet["objective"]
     assert "second scheduler" in packet["objective"]  # forbids a second lifecycle owner
     assert packet["authority_class"] == "ROUTINE"
-
