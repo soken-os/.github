@@ -1,3 +1,11 @@
 .cec/
 reference/cec/phase3/runtime/
 reference/cec/phase3/worktrees/
+
+# Python build artifacts. reference/cec/.gitignore covers that subtree, but the
+# repo-root conftest.py (added for the G8 sandbox skip) makes pytest write a
+# root-level __pycache__/ that nothing here matched — it showed up as untracked
+# noise on every run.
+__pycache__/
+*.pyc
+.pytest_cache/
