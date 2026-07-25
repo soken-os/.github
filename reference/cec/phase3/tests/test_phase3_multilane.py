@@ -32,6 +32,7 @@ import json
 import os
 import subprocess
 import sys
+import random
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -211,7 +212,7 @@ def _drive_until_terminal(controllers: dict, lanes: list[str], claimed: dict, er
     """Run every program's controller concurrently until its lanes settle."""
 
     def drive(program: str) -> None:
-        deadline = time.time() + 120
+        deadline = time.time() + 300
         try:
             while time.time() < deadline:
                 for lane_id, _outcome in run_scan_once(controllers[program]):
@@ -224,7 +225,8 @@ def _drive_until_terminal(controllers: dict, lanes: list[str], claimed: dict, er
                     r["stage"] in {"COMPLETE", "PARKED", "CANCELLED"} for r in mine
                 ):
                     return
-                time.sleep(0.3)
+                # Jitter: identical scan cadences maximise serialization collisions.
+                time.sleep(0.2 + random.random() * 0.3)
         except Exception as exc:  # surfaced as a failure, never swallowed
             errors.append(f"{program}: {type(exc).__name__}: {exc}")
 

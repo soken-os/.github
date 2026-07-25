@@ -7,6 +7,8 @@ import hashlib
 import json
 import logging
 import os
+import random
+import time
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -533,6 +535,32 @@ def unserved_programs(configured: Iterable[str]) -> list[tuple[str, int]]:
     )
 
 
+# Concurrent controllers over the one registry genuinely collide: the registry's
+# transactions are SERIALIZABLE, so Postgres cancels one side of a read/write
+# dependency cycle ("could not serialize access ... might succeed if retried").
+# This is expected under Option B, not a defect -- but it must be RETRIED, not
+# merely tolerated. Without a retry the item survives (the next scan tick picks
+# it up) yet each conflict costs a whole tick, which under load turns a
+# two-second convergence into minutes. Surfaced by the multi-lane proof.
+SERIALIZATION_RETRIES = 3
+_SERIALIZATION_BACKOFF_SECONDS = 0.05
+
+
+def _reconcile_with_serialization_retry(
+    controller: BootstrapController, work_item_id: str
+) -> str:
+    for attempt in range(SERIALIZATION_RETRIES + 1):
+        try:
+            return controller.reconcile_once(work_item_id)
+        except psycopg.errors.SerializationFailure:
+            if attempt == SERIALIZATION_RETRIES:
+                raise
+            # Jittered backoff so colliding controllers do not retry in lockstep
+            # and re-collide on the same boundary.
+            time.sleep(_SERIALIZATION_BACKOFF_SECONDS * (attempt + 1) * (1 + random.random()))
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def run_scan_once(controller: BootstrapController) -> list[tuple[str, str]]:
     outcomes: list[tuple[str, str]] = []
     for work_item_id in controller.due_items():
@@ -541,7 +569,9 @@ def run_scan_once(controller: BootstrapController) -> list[tuple[str, str]]:
         # control flow; one wedged item must never take down custody of every
         # other item, so the loop logs and continues.
         try:
-            outcomes.append((work_item_id, controller.reconcile_once(work_item_id)))
+            outcomes.append(
+                (work_item_id, _reconcile_with_serialization_retry(controller, work_item_id))
+            )
         except Exception as exc:  # noqa: BLE001 - deliberate loop-level isolation
             _log.exception("reconcile_once failed for %s", work_item_id)
             outcomes.append((work_item_id, f"ERROR:{type(exc).__name__}"))
