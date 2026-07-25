@@ -585,3 +585,20 @@ Scott correctly challenged the phrase "the machine dispatched its first build ta
 - **Machine acts (the leg that was actually under test):** once running, the service found the READY row, created the worktree, launched the `claude -p` worker itself with the packet as its instruction, leased/observed/heartbeat it, collected the typed claim, regenerated and verified the diff mechanically, transitioned `COMPLETE`, and delivered the notification. No conversational handoff existed anywhere in that leg; the worker's prompt was a database row.
 
 This satisfies the bootstrap criterion exactly as locked (which deliberately permitted a hand-authored packet and human seeding — the dispatch leg was the thing under test), and no more. The honest summary: **the loop no longer needs a human to stay alive; it still needs one to be born.** The gap-closers, in order: (1) always-on service via launchd — nobody types the start command; (2) registry seeding without a terminal (packet files the service watches, submittable from Scott's phone or Claude's session); (3) Phase 3.5 intake → planner → validator — machine-authored packets from raw intent, at which point "I gave the prompt" genuinely disappears.
+
+## Appendix H — F1 return-leg acceptance record (2026-07-25): trustworthy COMPLETE under the hardened worker sandbox
+
+**The F1 fix (deterministic notification delivery tick) was dispatched end-to-end and reached a mechanically-verified `COMPLETE` — the CEC return leg is proven under the G6 sandbox with the G8 and D2/G8-3 hardening in force.** This is the run the earlier NEEDS_INPUT convergence attempt could not reach; it is the first COMPLETE that exercises both the capability-test skip gate (G8) and first-class new-file evidence (D2).
+
+Fresh work item `phase3-p3-notification-tick-v2`, seeded at merged `main` SHA `f251de3932958b1d041e8696a6409131bae71cb1` (the old parked row was **not** requeued — its packet predated the fixes).
+
+- **Registry:** stage `COMPLETE`, version `60`, `lease_epoch=1`, custodian `CONTROLLER/phase3-bootstrap-controller`, completed `2026-07-25 13:19:19 UTC`.
+- **Evidence:** `completion_verified=true`; `diff_sha256=e14486933b9c1bf659fef87874955a7c25459c8f4a2329cb8d7a1aff554325fc`.
+- **Verified new-files map** (controller re-hashed each file's bytes straight from the worktree before advancing `RESULT_CLAIMED → COMPLETE`):
+  - `reference/cec/phase3/conftest.py` → `340090a4d29028b21f699fdf7b30ecb097bacc9463b1c495d08263dd4fc0bbc6`
+  - `reference/cec/phase3/tests/test_phase3_delivery.py` → `9efac22a4427a75f321c7420e17560af466499d0a8a7ae07c29ef3284e9ea28e`
+- **Gate tail:** `45 passed, 14 skipped, 3 warnings`. The 14 skips are exactly the 7 capability-blocked tests G8 skips inside the worker sandbox (4 nested-sandbox + 3 `ps` identity) plus 7 Postgres-marked tests excluded from the non-Postgres gate. **None failed** — the gate no longer false-fails on tests the confined worker physically cannot run.
+
+**What this proves.** G8: the worker's acceptance gate skips the capability-blocked tests instead of failing them, so the lane no longer stalls at NEEDS_INPUT on a confinement artifact. D2/G8-3: the two files the worker created were bound into the verified evidence bundle by controller-side re-hashing, and the worker's diff was never committed or pushed — commit custody and evidence-integrity both held. The single-lane return leg is accepted.
+
+**Not yet accepted (open gate before the 10-reviewer fleet):** multi-lane concurrency — several build items routed through CEC at once, each with independent lease/epoch custody and no cross-lane fate-sharing. That is the remaining acceptance proof for "CEC build finished," to be built on top of this proven single lane.
