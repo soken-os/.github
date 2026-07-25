@@ -23,7 +23,8 @@ from ..phase2.bootstrap import migrate as phase2_migrate
 from .packet import FORBIDDEN_PATHS, REPO_ROOT, build_packet, current_ref
 
 PROGRAM_CEC_REVIEW = "CEC-REVIEW"
-FLEET_DIR = "reference/cec/phase3/runtime/fleet"
+FLEET_FINDINGS_DIR = "reference/cec/phase3/review-findings"
+FLEET_ARTIFACTS_DIR = "reference/cec/phase3/runtime/fleet"
 
 FINDING_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -53,7 +54,7 @@ FINDING_SCHEMA: dict[str, Any] = {
 
 
 def _findings_path(charter_id: str) -> str:
-    return f"{FLEET_DIR}/{charter_id}-findings.json"
+    return f"{FLEET_FINDINGS_DIR}/{charter_id}-findings.json"
 
 
 CHARTERS: list[dict[str, Any]] = [
