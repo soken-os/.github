@@ -135,12 +135,13 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def _process_identity_matches(handle: WorkerHandle) -> bool:
+def _process_identity_matches(
+    handle: WorkerHandle, working_directory: Path | None = None
+) -> bool:
     if handle.pid is None:
         return False
-    record = _read_json_or_none(
-        Path.cwd() / ".cec" / f"{handle.command_id}.process.json"
-    )
+    base = working_directory or Path.cwd()
+    record = _read_json_or_none(base / ".cec" / f"{handle.command_id}.process.json")
     if not isinstance(record, dict):
         return False
     recorded_start = record.get("process_start_time")
@@ -302,18 +303,18 @@ class _SubprocessAdapterBase:
             started_at=started_at,
         )
 
-    async def observe(self, handle: WorkerHandle) -> WorkerObservation:
-        # Reconstruct paths from the handle without the original command.
-        # (working_directory is not on the handle; observe() is given enough by
-        #  the controller in practice. Here we probe by pid + the exit sidecar
-        #  the reaper writes; output presence is confirmed in collect_result.)
-        alive = _process_identity_matches(handle)
+    async def observe(
+        self, handle: WorkerHandle, *, working_directory: Path | None = None
+    ) -> WorkerObservation:
+        # The controller passes working_directory explicitly so observe() never
+        # relies on the process-global CWD — which is racy when multiple
+        # controller threads serve different programs concurrently (Option B).
+        base = working_directory or Path.cwd()
+        alive = _process_identity_matches(handle, base)
         exit_code: int | None = None
         output_present = False
 
-        # The controller knows the working directory; a production controller
-        # passes it in. For the reference we look relative to CWD's .cec.
-        d = Path.cwd() / ".cec"
+        d = base / ".cec"
         exit_path = d / f"{handle.command_id}.exit"
         stdout_path = d / f"{handle.command_id}.stdout"
         last_path = d / f"{handle.command_id}.last.json"
@@ -401,21 +402,25 @@ class _SubprocessAdapterBase:
         )
 
     async def terminate(
-        self, handle: WorkerHandle, *, reason: str, grace_seconds: int = 10
+        self,
+        handle: WorkerHandle,
+        *,
+        reason: str,
+        grace_seconds: int = 10,
+        working_directory: Path | None = None,
     ) -> None:
-        if not _process_identity_matches(handle):
+        if not _process_identity_matches(handle, working_directory):
             return
         assert handle.pid is not None
         try:
-            # Signal the whole process group (new session) so children die too.
             os.killpg(os.getpgid(handle.pid), signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             return
         for _ in range(max(1, grace_seconds)):
-            if not _process_identity_matches(handle):
+            if not _process_identity_matches(handle, working_directory):
                 return
             await asyncio.sleep(1)
-        if not _process_identity_matches(handle):
+        if not _process_identity_matches(handle, working_directory):
             return
         try:
             os.killpg(os.getpgid(handle.pid), signal.SIGKILL)

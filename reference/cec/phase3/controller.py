@@ -386,8 +386,11 @@ class BootstrapController:
                 return "WORKER_UNOBSERVABLE"
             handle = observed_handle
             command = self._command(item)
-            with _working_directory(command.working_directory):
-                observation = asyncio.run(self.adapter.observe(handle))
+            observation = asyncio.run(
+                self.adapter.observe(
+                    handle, working_directory=command.working_directory
+                )
+            )
             if observation.state is WorkerProcessState.RUNNING:
                 # G1: renew BOTH the lease and the signal deadline from observed
                 # liveness (the locked "controller renews from liveness" model,
@@ -416,10 +419,13 @@ class BootstrapController:
                         },
                     )
                     return "WORKER_RUNNING"
-                with _working_directory(command.working_directory):
-                    asyncio.run(
-                        self.adapter.terminate(handle, reason="runtime budget exceeded")
+                asyncio.run(
+                    self.adapter.terminate(
+                        handle,
+                        reason="runtime budget exceeded",
+                        working_directory=command.working_directory,
                     )
+                )
                 return self._reclaim_to_recovery(
                     item, now, reason="RUNTIME_BUDGET_EXCEEDED"
                 )

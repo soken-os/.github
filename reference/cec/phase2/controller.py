@@ -205,7 +205,9 @@ class OneTaskController:
             if observed_handle is None:
                 return "WORKER_UNOBSERVABLE"
             handle = observed_handle
-            observation = asyncio.run(self.adapter.observe(handle))
+            observation = asyncio.run(
+                self.adapter.observe(handle, working_directory=self.workspace)
+            )
             if observation.state is WorkerProcessState.RUNNING:
                 return "WORKER_RUNNING"
             command = self._command(item)
