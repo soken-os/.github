@@ -8,7 +8,6 @@ the control plane, not a change to it.
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -75,7 +74,13 @@ def _seed_parked(item_id: str) -> None:
             VALUES (%s,%s,'metrics probe parked','CIRCUIT_BUILD',60,600,
                     'PARKED','HUMAN_DECISION','HUMAN','scott',%s,1,%s,
                     'HUMAN_REVIEW','metrics',%s,'{}'::jsonb,'{}'::jsonb,'ROUTINE')""",
-            (item_id, PROGRAM, uuid4(), now + timedelta(hours=1), now + timedelta(hours=1)),
+            (
+                item_id,
+                PROGRAM,
+                uuid4(),
+                now + timedelta(hours=1),
+                now + timedelta(hours=1),
+            ),
         )
 
 
@@ -101,12 +106,30 @@ def test_program_metrics_computes_lead_time_and_first_pass_yield(pg):
     ids = ["metrics-a", "metrics-b", "metrics-c"]
     try:
         # Two clean completions, one that needed a recovery attempt.
-        _seed_completed(ids[0], created_offset_seconds=1000, lead_time_seconds=100,
-                         estimated_duration_seconds=600, recovery_attempts=0, lease_epoch=0)
-        _seed_completed(ids[1], created_offset_seconds=1000, lead_time_seconds=200,
-                         estimated_duration_seconds=600, recovery_attempts=0, lease_epoch=0)
-        _seed_completed(ids[2], created_offset_seconds=1000, lead_time_seconds=900,
-                         estimated_duration_seconds=600, recovery_attempts=2, lease_epoch=3)
+        _seed_completed(
+            ids[0],
+            created_offset_seconds=1000,
+            lead_time_seconds=100,
+            estimated_duration_seconds=600,
+            recovery_attempts=0,
+            lease_epoch=0,
+        )
+        _seed_completed(
+            ids[1],
+            created_offset_seconds=1000,
+            lead_time_seconds=200,
+            estimated_duration_seconds=600,
+            recovery_attempts=0,
+            lease_epoch=0,
+        )
+        _seed_completed(
+            ids[2],
+            created_offset_seconds=1000,
+            lead_time_seconds=900,
+            estimated_duration_seconds=600,
+            recovery_attempts=2,
+            lease_epoch=3,
+        )
 
         metrics = program_metrics(PROGRAM)
 
@@ -144,8 +167,14 @@ def test_program_with_no_items_reports_none_not_a_crash(pg):
 def test_all_programs_and_rollup_include_a_freshly_seeded_program(pg):
     ids = ["metrics-rollup-1"]
     try:
-        _seed_completed(ids[0], created_offset_seconds=500, lead_time_seconds=50,
-                         estimated_duration_seconds=300, recovery_attempts=0, lease_epoch=0)
+        _seed_completed(
+            ids[0],
+            created_offset_seconds=500,
+            lead_time_seconds=50,
+            estimated_duration_seconds=300,
+            recovery_attempts=0,
+            lease_epoch=0,
+        )
 
         assert PROGRAM in all_programs()
 
@@ -160,12 +189,16 @@ def test_metrics_module_writes_nothing(pg):
     """The reporting layer must be strictly read-only."""
     ids = ["metrics-readonly-1"]
     try:
-        _seed_completed(ids[0], created_offset_seconds=100, lead_time_seconds=10,
-                         estimated_duration_seconds=60, recovery_attempts=0, lease_epoch=0)
+        _seed_completed(
+            ids[0],
+            created_offset_seconds=100,
+            lead_time_seconds=10,
+            estimated_duration_seconds=60,
+            recovery_attempts=0,
+            lease_epoch=0,
+        )
         with psycopg.connect(database_url()) as conn:
-            before = conn.execute(
-                "SELECT count(*) FROM cec.events"
-            ).fetchone()[0]
+            before = conn.execute("SELECT count(*) FROM cec.events").fetchone()[0]
 
         program_metrics(PROGRAM)
         executor_rollup()

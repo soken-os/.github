@@ -22,6 +22,7 @@ plane rather than inside it.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -50,7 +51,9 @@ def _connect():
     return psycopg.connect(database_url(), row_factory=dict_row)
 
 
-def program_metrics(program: str, *, task_class: str = "CIRCUIT_BUILD") -> ProgramMetrics:
+def program_metrics(
+    program: str, *, task_class: str = "CIRCUIT_BUILD"
+) -> ProgramMetrics:
     """Roll-up metrics for one program, computed directly from work_items."""
 
     with _connect() as conn:
@@ -145,13 +148,15 @@ def stage_dwell_seconds(work_item_id: str) -> dict[str, float]:
         return {}
 
     dwell: dict[str, float] = {}
-    for current, following in zip(events, events[1:]):
+    for current, following in itertools.pairwise(events):
         stage = str(current["event_type"])
         seconds = (following["observed_at"] - current["observed_at"]).total_seconds()
         dwell[stage] = dwell.get(stage, 0.0) + seconds
 
     last = events[-1]
-    end = (item["completed_at"] if item else None) or datetime.now(last["observed_at"].tzinfo)
+    end = (item["completed_at"] if item else None) or datetime.now(
+        last["observed_at"].tzinfo
+    )
     stage = str(last["event_type"])
     dwell[stage] = dwell.get(stage, 0.0) + (end - last["observed_at"]).total_seconds()
     return dwell
@@ -168,14 +173,18 @@ def executor_rollup(*, task_class: str = "CIRCUIT_BUILD") -> dict[str, Any]:
     programs = all_programs(task_class=task_class)
     return {
         "generated_for_task_class": task_class,
-        "programs": {program: asdict(program_metrics(program, task_class=task_class))
-                      for program in programs},
+        "programs": {
+            program: asdict(program_metrics(program, task_class=task_class))
+            for program in programs
+        },
     }
 
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--program", help="report one program; omit for the full roll-up")
+    result.add_argument(
+        "--program", help="report one program; omit for the full roll-up"
+    )
     result.add_argument("--task-class", default="CIRCUIT_BUILD")
     return result
 
@@ -183,7 +192,11 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.program:
-        print(json.dumps(asdict(program_metrics(args.program, task_class=args.task_class))))
+        print(
+            json.dumps(
+                asdict(program_metrics(args.program, task_class=args.task_class))
+            )
+        )
     else:
         print(json.dumps(executor_rollup(task_class=args.task_class)))
     return 0
