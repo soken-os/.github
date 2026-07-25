@@ -90,18 +90,42 @@ def test_each_controller_claims_only_its_own_program() -> None:
 def test_no_item_is_dispatched_by_two_controllers() -> None:
     # The collision the program filter exists to prevent: the union of every
     # controller's queue must contain each item at most once.
+    #
+    # NOTE (finding M3): the configured program set is supplied EXPLICITLY here,
+    # exactly as it comes from configuration in production. Deriving it from the
+    # rows would make this tautological -- every program would appear served by
+    # construction, and a typo'd program could never be caught. The real
+    # unserved-program detector is `unserved_programs()`, covered against the
+    # live registry in test_phase3_program_guard.py.
     rows = _registry()
-    programs = {row["program"] for row in rows}
+    configured = [PROGRAM_CEC, "carlson-roofing", "executor"]
     claimed = [
         item_id
-        for program in programs
+        for program in configured
         for item_id in _ProgramScopedController(program, rows).due_items()
     ]
 
     assert len(claimed) == len(set(claimed)), "an item was claimed by two controllers"
-    # ...and every non-terminal item is claimed by exactly one controller: scoping
-    # must not silently orphan work either.
     assert set(claimed) == {"cec-1", "roof-1", "roof-2", "exec-1"}
+
+
+def test_an_unconfigured_program_is_visibly_unserved() -> None:
+    # The failure scoping introduces: a row whose program has no controller is
+    # claimed by nobody. It must be detectable, not silently invisible.
+    rows = _registry() + [_row("typo-1", "carlson-roofng")]  # deliberate typo
+    configured = [PROGRAM_CEC, "carlson-roofing", "executor"]
+    claimed = {
+        item_id
+        for program in configured
+        for item_id in _ProgramScopedController(program, rows).due_items()
+    }
+
+    nonterminal = {
+        r["id"] for r in rows if r["stage"] not in {"COMPLETE", "CANCELLED"}
+    }
+    assert "typo-1" in nonterminal - claimed, (
+        "the typo'd row should be unclaimed by every configured controller"
+    )
 
 
 def test_controller_refuses_another_programs_item() -> None:
