@@ -7,10 +7,12 @@ import hashlib
 import json
 import logging
 import os
+import random
+import time
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from uuid import UUID, uuid4
 
 import psycopg
@@ -29,7 +31,7 @@ from ..phase0.bootstrap import database_url
 from ..phase1.registry import Registry, TransitionPatch
 from ..phase2.notifications import deliver_pending
 from .evidence import CodeEvidenceRejected, verify_code_change_claim
-from .packet import BOOTSTRAP_RESULT_SCHEMA, REPO_ROOT
+from .packet import BOOTSTRAP_RESULT_SCHEMA, PROGRAM_CEC, REPO_ROOT
 from .worktree import WorktreeRecord, create_worktree, write_unified_diff
 
 
@@ -110,7 +112,12 @@ class BootstrapController:
         worktree_root: Path | None = None,
         bridge_outbox: Path | None = None,
         worker_kind: WorkerKind = WorkerKind.CLAUDE_CODE,
+        program: str = PROGRAM_CEC,
     ) -> None:
+        # One controller serves one program in one repo. Process-level separation
+        # is deliberate: a controller that dies takes only its own program's lane
+        # with it, and the cwd-bound worker sidecar path stays unambiguous.
+        self.program = program
         self.repo_root = repo_root.resolve()
         os.chdir(self.repo_root)
         self.worktree_root = (
@@ -129,13 +136,19 @@ class BootstrapController:
         )
 
     def due_items(self) -> list[str]:
+        # Program-scoped: one controller serves exactly one program. Without this
+        # filter, running a controller per program over the shared registry makes
+        # EVERY controller dispatch EVERY item — double-dispatch of the same work
+        # by different repos' controllers.
         with psycopg.connect(database_url()) as conn:
             rows = conn.execute(
                 """SELECT id FROM cec.work_items
                 WHERE stage NOT IN ('COMPLETE','CANCELLED')
                 AND task_class='CIRCUIT_BUILD'
+                AND program=%s
                 AND work_packet ? 'starting_ref'
-                ORDER BY priority_class DESC, created_at ASC"""
+                ORDER BY priority_class DESC, created_at ASC""",
+                (self.program,),
             ).fetchall()
         return [str(row[0]) for row in rows]
 
@@ -274,6 +287,21 @@ class BootstrapController:
 
     def reconcile_once(self, work_item_id: str) -> str:
         item = self.load_item(work_item_id)
+        # Fail closed on cross-program work: even if an item is handed to this
+        # controller directly (not via due_items), it must not act on another
+        # program's row -- its repo, worktree root, and sandbox all belong to a
+        # different project. Refusing is a no-op, never a state transition.
+        if str(item["program"]) != self.program:
+            return f"NOT_MY_PROGRAM:{item['program']}"
+        # M2: the registry row and its packet must agree. A row routed as CEC
+        # could otherwise carry another program's packet and get executed in the
+        # CEC repo against CEC's allowed paths. Legacy packets predating the
+        # field are permitted (absent = inherits the row); a packet that DOES
+        # declare a program and disagrees is refused before any worktree,
+        # adapter, lease, or event side effect.
+        packet_program = dict(item["work_packet"]).get("program")
+        if packet_program is not None and str(packet_program) != str(item["program"]):
+            return f"PACKET_PROGRAM_MISMATCH:{packet_program}"
         now = _now()
         if item["stage"] == "COMPLETE":
             deliver_pending(self.bridge_outbox)
@@ -475,6 +503,64 @@ class BootstrapController:
         return "NO_ACTION"
 
 
+def unserved_programs(configured: Iterable[str]) -> list[tuple[str, int]]:
+    """Nonterminal work whose program has NO configured controller (finding M3).
+
+    Program-scoped dispatch closes double-dispatch, but it opens the opposite
+    failure: an item seeded with a typo'd or not-yet-configured program is
+    claimed by nobody and sits forever, invisible. Silent invisibility is not an
+    acceptable outcome for CEC, so this makes the condition mechanically
+    observable.
+
+    `configured` is the explicit set of programs that actually have controllers
+    — it must come from configuration, never be derived from the rows being
+    checked, or the check becomes tautological and can never fire.
+
+    Returns (program, nonterminal_count) pairs, sorted, for every unserved
+    program. An empty list means every nonterminal item has an owner.
+    """
+
+    configured_set = {str(program) for program in configured}
+    with psycopg.connect(database_url()) as conn:
+        rows = conn.execute(
+            """SELECT program, count(*) FROM cec.work_items
+            WHERE stage NOT IN ('COMPLETE','CANCELLED')
+            AND task_class='CIRCUIT_BUILD'
+            GROUP BY program"""
+        ).fetchall()
+    return sorted(
+        (str(program), int(count))
+        for program, count in rows
+        if str(program) not in configured_set
+    )
+
+
+# Concurrent controllers over the one registry genuinely collide: the registry's
+# transactions are SERIALIZABLE, so Postgres cancels one side of a read/write
+# dependency cycle ("could not serialize access ... might succeed if retried").
+# This is expected under Option B, not a defect -- but it must be RETRIED, not
+# merely tolerated. Without a retry the item survives (the next scan tick picks
+# it up) yet each conflict costs a whole tick, which under load turns a
+# two-second convergence into minutes. Surfaced by the multi-lane proof.
+SERIALIZATION_RETRIES = 3
+_SERIALIZATION_BACKOFF_SECONDS = 0.05
+
+
+def _reconcile_with_serialization_retry(
+    controller: BootstrapController, work_item_id: str
+) -> str:
+    for attempt in range(SERIALIZATION_RETRIES + 1):
+        try:
+            return controller.reconcile_once(work_item_id)
+        except psycopg.errors.SerializationFailure:
+            if attempt == SERIALIZATION_RETRIES:
+                raise
+            # Jittered backoff so colliding controllers do not retry in lockstep
+            # and re-collide on the same boundary.
+            time.sleep(_SERIALIZATION_BACKOFF_SECONDS * (attempt + 1) * (1 + random.random()))
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def run_scan_once(controller: BootstrapController) -> list[tuple[str, str]]:
     outcomes: list[tuple[str, str]] = []
     for work_item_id in controller.due_items():
@@ -483,7 +569,9 @@ def run_scan_once(controller: BootstrapController) -> list[tuple[str, str]]:
         # control flow; one wedged item must never take down custody of every
         # other item, so the loop logs and continues.
         try:
-            outcomes.append((work_item_id, controller.reconcile_once(work_item_id)))
+            outcomes.append(
+                (work_item_id, _reconcile_with_serialization_retry(controller, work_item_id))
+            )
         except Exception as exc:  # noqa: BLE001 - deliberate loop-level isolation
             _log.exception("reconcile_once failed for %s", work_item_id)
             outcomes.append((work_item_id, f"ERROR:{type(exc).__name__}"))
