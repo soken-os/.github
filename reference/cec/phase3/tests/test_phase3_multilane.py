@@ -215,19 +215,29 @@ def _drive_until_terminal(
 
     def drive(program: str) -> None:
         deadline = time.time() + 300
+        scan_count = 0
         try:
             while time.time() < deadline:
-                for lane_id, _outcome in run_scan_once(controllers[program]):
-                    # Scoped to this run: residue from other runs is not evidence.
+                scan_count += 1
+                outcomes = run_scan_once(controllers[program])
+                for lane_id, outcome in outcomes:
                     if lane_id in lanes and lane_id not in claimed[program]:
                         claimed[program].append(lane_id)
+                    if lane_id.startswith(POISONED_SUFFIX) and scan_count <= 20:
+                        import sys
+
+                        print(
+                            f"[DIAG] {program} scan={scan_count} "
+                            f"lane={lane_id} outcome={outcome}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                 rows = _rows(lanes)
                 mine = [r for r in rows.values() if r["program"] == program]
                 if mine and all(
                     r["stage"] in {"COMPLETE", "PARKED", "CANCELLED"} for r in mine
                 ):
                     return
-                # Jitter: identical scan cadences maximise serialization collisions.
                 time.sleep(0.2 + random.random() * 0.3)
         except Exception as exc:  # noqa: BLE001  # surfaced as a failure, never swallowed
             errors.append(f"{program}: {type(exc).__name__}: {exc}")
