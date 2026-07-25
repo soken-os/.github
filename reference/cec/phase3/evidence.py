@@ -158,8 +158,8 @@ def verify_code_change_claim(
     test_text = test_path.read_text(encoding="utf-8")
     if "passed" not in test_text or " failed" in test_text.lower():
         raise CodeEvidenceRejected("test output does not prove passing tests")
-    if not diff_path.read_text(encoding="utf-8").strip():
-        raise CodeEvidenceRejected("diff artifact is empty")
+    if not diff_path.read_text(encoding="utf-8").strip() and not declared_new:
+        raise CodeEvidenceRejected("diff artifact is empty and no new files")
     return {
         "completion_verified": True,
         "starting_ref": starting_ref,
