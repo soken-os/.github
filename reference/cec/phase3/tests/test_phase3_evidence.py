@@ -7,7 +7,9 @@ from reference.cec.phase3.evidence import CodeEvidenceRejected, verify_code_chan
 
 
 def _git(repo, *args):
-    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    )
 
 
 def _claim(test_output, diff_artifact, changed):
@@ -19,8 +21,18 @@ def _claim(test_output, diff_artifact, changed):
         "test_output_sha256": test_digest,
         "diff_sha256": diff_digest,
         "evidence": [
-            {"kind": "file", "role": "test_output", "path": str(test_output), "sha256": test_digest},
-            {"kind": "file", "role": "diff", "path": str(diff_artifact), "sha256": diff_digest},
+            {
+                "kind": "file",
+                "role": "test_output",
+                "path": str(test_output),
+                "sha256": test_digest,
+            },
+            {
+                "kind": "file",
+                "role": "diff",
+                "path": str(diff_artifact),
+                "sha256": diff_digest,
+            },
         ],
     }
 
@@ -50,7 +62,11 @@ def test_verifies_code_change_dual_artifacts(tmp_path):
         _claim(test_output, diff_artifact, ["allowed.txt"]),
         worktree=repo,
         starting_ref=base,
-        packet={"allowed_paths": ["allowed.txt"], "forbidden_paths": [], "new_files_allowed": False},
+        packet={
+            "allowed_paths": ["allowed.txt"],
+            "forbidden_paths": [],
+            "new_files_allowed": False,
+        },
     )
     assert evidence["completion_verified"] is True
     assert evidence["files_changed"] == ["allowed.txt"]
@@ -97,7 +113,11 @@ def test_rejects_diff_outside_allow_list(tmp_path):
             _claim(test_output, diff_artifact, ["allowed.txt"]),
             worktree=repo,
             starting_ref=base,
-            packet={"allowed_paths": ["other.txt"], "forbidden_paths": [], "new_files_allowed": False},
+            packet={
+                "allowed_paths": ["other.txt"],
+                "forbidden_paths": [],
+                "new_files_allowed": False,
+            },
         )
 
 
@@ -114,7 +134,11 @@ def test_rejects_new_files_when_forbidden(tmp_path):
             _claim(test_output, diff_artifact, ["new.txt"]),
             worktree=repo,
             starting_ref=base,
-            packet={"allowed_paths": ["new.txt"], "forbidden_paths": [], "new_files_allowed": False},
+            packet={
+                "allowed_paths": ["new.txt"],
+                "forbidden_paths": [],
+                "new_files_allowed": False,
+            },
         )
 
 
@@ -146,8 +170,8 @@ def _scenario_tracked_plus_new(tmp_path):
 
 
 def test_verifies_new_file_with_matching_hash(tmp_path):
-    repo, base, test_output, diff_artifact, new_sha, packet = _scenario_tracked_plus_new(
-        tmp_path
+    repo, base, test_output, diff_artifact, new_sha, packet = (
+        _scenario_tracked_plus_new(tmp_path)
     )
     claim = _claim(test_output, diff_artifact, ["allowed.txt", "added.txt"])
     claim["evidence"].append(_new_file_item("added.txt", new_sha))
@@ -163,41 +187,35 @@ def test_verifies_new_file_with_matching_hash(tmp_path):
 def test_rejects_new_file_with_no_hash_evidence(tmp_path):
     # The new file is enumerated by name (so allow-list gating applies) but the
     # claim carries no 'new_file' entry -> its bytes are unverified -> rejected.
-    repo, base, test_output, diff_artifact, _new_sha, packet = _scenario_tracked_plus_new(
-        tmp_path
+    repo, base, test_output, diff_artifact, _new_sha, packet = (
+        _scenario_tracked_plus_new(tmp_path)
     )
     claim = _claim(test_output, diff_artifact, ["allowed.txt", "added.txt"])
 
     with pytest.raises(CodeEvidenceRejected, match="new_file evidence does not match"):
-        verify_code_change_claim(
-            claim, worktree=repo, starting_ref=base, packet=packet
-        )
+        verify_code_change_claim(claim, worktree=repo, starting_ref=base, packet=packet)
 
 
 def test_rejects_new_file_with_wrong_hash(tmp_path):
-    repo, base, test_output, diff_artifact, _new_sha, packet = _scenario_tracked_plus_new(
-        tmp_path
+    repo, base, test_output, diff_artifact, _new_sha, packet = (
+        _scenario_tracked_plus_new(tmp_path)
     )
     claim = _claim(test_output, diff_artifact, ["allowed.txt", "added.txt"])
     claim["evidence"].append(_new_file_item("added.txt", "0" * 64))
 
     with pytest.raises(CodeEvidenceRejected, match="new file SHA-256 does not match"):
-        verify_code_change_claim(
-            claim, worktree=repo, starting_ref=base, packet=packet
-        )
+        verify_code_change_claim(claim, worktree=repo, starting_ref=base, packet=packet)
 
 
 def test_rejects_new_file_evidence_for_nonexistent_new_file(tmp_path):
     # An 'extra' new_file entry that does not correspond to an actually-created
     # new file must be rejected (no smuggling hashes for files not in the diff).
-    repo, base, test_output, diff_artifact, new_sha, packet = _scenario_tracked_plus_new(
-        tmp_path
+    repo, base, test_output, diff_artifact, new_sha, packet = (
+        _scenario_tracked_plus_new(tmp_path)
     )
     claim = _claim(test_output, diff_artifact, ["allowed.txt", "added.txt"])
     claim["evidence"].append(_new_file_item("added.txt", new_sha))
     claim["evidence"].append(_new_file_item("ghost.txt", "1" * 64))
 
     with pytest.raises(CodeEvidenceRejected, match="new_file evidence does not match"):
-        verify_code_change_claim(
-            claim, worktree=repo, starting_ref=base, packet=packet
-        )
+        verify_code_change_claim(claim, worktree=repo, starting_ref=base, packet=packet)

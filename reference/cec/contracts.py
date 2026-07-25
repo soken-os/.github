@@ -55,7 +55,7 @@ class ClaimedStatus(StrEnum):
 
 @dataclass(frozen=True)
 class WorkerCommand:
-    command_id: str                 # Content-addressed idempotency key.
+    command_id: str  # Content-addressed idempotency key.
     work_item_id: str
     worker_kind: WorkerKind
     lease_token: UUID

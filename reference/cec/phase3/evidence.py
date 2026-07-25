@@ -67,7 +67,11 @@ def _changed_paths(
 
 
 def verify_code_change_claim(
-    claim: Mapping[str, Any], *, worktree: Path, starting_ref: str, packet: Mapping[str, Any]
+    claim: Mapping[str, Any],
+    *,
+    worktree: Path,
+    starting_ref: str,
+    packet: Mapping[str, Any],
 ) -> dict[str, Any]:
     if claim.get("status") != "RESULT_CLAIMED":
         raise CodeEvidenceRejected("worker did not claim a completed result")

@@ -120,9 +120,7 @@ def test_an_unconfigured_program_is_visibly_unserved() -> None:
         for item_id in _ProgramScopedController(program, rows).due_items()
     }
 
-    nonterminal = {
-        r["id"] for r in rows if r["stage"] not in {"COMPLETE", "CANCELLED"}
-    }
+    nonterminal = {r["id"] for r in rows if r["stage"] not in {"COMPLETE", "CANCELLED"}}
     assert "typo-1" in nonterminal - claimed, (
         "the typo'd row should be unclaimed by every configured controller"
     )

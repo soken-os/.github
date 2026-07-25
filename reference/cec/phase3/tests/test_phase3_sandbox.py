@@ -109,7 +109,9 @@ def confinement(tmp_path):
         outside,
     ):
         d.mkdir()
-    assert sandbox_available(), "shipped profile + sandbox-exec must be present on macOS"
+    assert sandbox_available(), (
+        "shipped profile + sandbox-exec must be present on macOS"
+    )
     return (
         worktree,
         home_state,

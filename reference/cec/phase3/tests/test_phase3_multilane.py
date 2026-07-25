@@ -208,7 +208,9 @@ def _cleanup(lanes: list[str], worktree_root: Path) -> None:
         )
 
 
-def _drive_until_terminal(controllers: dict, lanes: list[str], claimed: dict, errors: list):
+def _drive_until_terminal(
+    controllers: dict, lanes: list[str], claimed: dict, errors: list
+):
     """Run every program's controller concurrently until its lanes settle."""
 
     def drive(program: str) -> None:

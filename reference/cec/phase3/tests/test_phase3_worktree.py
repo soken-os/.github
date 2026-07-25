@@ -4,7 +4,9 @@ from reference.cec.phase3.worktree import create_worktree, remove_worktree
 
 
 def _git(repo, *args):
-    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    )
 
 
 def test_controller_creates_and_removes_worktree(tmp_path):
