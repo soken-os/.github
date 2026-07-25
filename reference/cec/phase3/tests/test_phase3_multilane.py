@@ -233,13 +233,16 @@ def _drive_until_terminal(
             errors.append(f"{program}: {type(exc).__name__}: {exc}")
 
     threads = [
-        threading.Thread(target=drive, args=(program,), daemon=True)
+        threading.Thread(target=drive, args=(program,), daemon=True, name=program)
         for program in controllers
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=150)
+        thread.join(timeout=330)
+    hung = [t.name for t in threads if t.is_alive()]
+    if hung:
+        errors.append(f"driver threads still alive after join: {hung}")
 
 
 @pytest.fixture(scope="module")
