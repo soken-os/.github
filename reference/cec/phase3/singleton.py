@@ -20,6 +20,7 @@ can waste a worker launch.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import os
 import re
 from contextlib import contextmanager
@@ -34,10 +35,18 @@ class ProgramAlreadyServed(RuntimeError):
 
 
 def _lock_path(program: str, lock_dir: Path) -> Path:
-    # Programs name files; keep them filesystem-safe without collapsing distinct
-    # names onto one lock (which would let two real programs block each other).
+    """Filesystem-safe, collision-free lock name for a program.
+
+    Sanitizing alone is not enough: `a/b` and `a?b` both reduce to `a_b`, so two
+    distinct programs would contend for one lock and the second controller would
+    refuse to start — an availability/orphan bug, not just cosmetics. A short
+    digest of the ORIGINAL name is appended so distinct programs can never
+    collide while the readable part still identifies the lock at a glance.
+    """
+
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", program)
-    return lock_dir / f"controller-{safe}.lock"
+    digest = hashlib.sha256(program.encode("utf-8")).hexdigest()[:8]
+    return lock_dir / f"controller-{safe}-{digest}.lock"
 
 
 @contextmanager

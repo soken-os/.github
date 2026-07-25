@@ -224,3 +224,58 @@ def test_no_alarm_when_every_nonterminal_program_is_configured(guard_controller)
         assert unserved_programs(programs) == []
     finally:
         _cleanup(served)
+
+
+# --- M3 (operational): the sentinel is the production caller ------------------
+
+
+def test_sentinel_exits_nonzero_and_reports_unserved_programs(guard_controller, tmp_path):
+    """A detector nothing invokes closes nothing — this is the invoking path."""
+    from reference.cec.phase3 import sentinel
+
+    served = "sentinel-served"
+    typo = "sentinel-typoed"
+    _seed(served, served, _packet(served))
+    _seed(typo, typo, _packet(typo))
+    try:
+        code = sentinel.main(["--program", served, "--program", ALPHA])
+        assert code == sentinel.EXIT_UNSERVED, "unserved work did not fail the sentinel"
+
+        # And it is quiet when everything nonterminal has an owner.
+        with psycopg.connect(database_url()) as conn:
+            all_programs = [
+                str(row[0])
+                for row in conn.execute(
+                    """SELECT DISTINCT program FROM cec.work_items
+                    WHERE stage NOT IN ('COMPLETE','CANCELLED')
+                    AND task_class='CIRCUIT_BUILD'"""
+                ).fetchall()
+            ]
+        argv = [arg for program in all_programs for arg in ("--program", program)]
+        assert sentinel.main(argv) == 0
+    finally:
+        _cleanup(served, typo)
+
+
+def test_sentinel_fails_closed_without_a_configured_set(guard_controller):
+    """No configured programs must not read as a clean bill of health."""
+    from reference.cec.phase3 import sentinel
+
+    assert sentinel.main([]) == 2
+
+
+def test_sentinel_reads_a_configured_programs_file(guard_controller, tmp_path):
+    from reference.cec.phase3 import sentinel
+
+    served = "sentinel-file-served"
+    _seed(served, served, _packet(served))
+    try:
+        config = tmp_path / "programs.txt"
+        config.write_text(f"# configured controllers\n{served}\n{ALPHA}\n", encoding="utf-8")
+        configured = sentinel.load_configured(
+            sentinel.parser().parse_args(["--programs-file", str(config)])
+        )
+        assert served in configured and ALPHA in configured
+        assert not any(c.startswith("#") for c in configured)
+    finally:
+        _cleanup(served)

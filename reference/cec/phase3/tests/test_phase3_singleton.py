@@ -45,12 +45,18 @@ def test_lock_is_released_for_the_next_owner(tmp_path):
         pass
 
 
-def test_similar_program_names_do_not_share_one_lock(tmp_path):
-    # Sanitizing names for the filesystem must not collapse distinct programs
-    # onto the same lock, which would make one program block an unrelated one.
+def test_sanitized_names_that_would_collide_get_distinct_locks(tmp_path):
+    """The exact collision pair: both sanitize to `a_b`.
+
+    Without a digest suffix these two distinct programs share one lock file, so
+    starting the second controller is refused — an availability/orphan bug where
+    a real program silently never gets served.
+    """
     with program_singleton("a/b", lock_dir=tmp_path):
-        with program_singleton("a-b", lock_dir=tmp_path):
+        with program_singleton("a?b", lock_dir=tmp_path):
             pass
+    locks = sorted(p.name for p in tmp_path.glob("controller-*.lock"))
+    assert len(locks) == 2, f"distinct programs shared a lock file: {locks}"
 
 
 def test_lock_is_held_against_a_separate_os_process(tmp_path):
