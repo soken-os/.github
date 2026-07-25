@@ -223,15 +223,6 @@ def _drive_until_terminal(
                 for lane_id, outcome in outcomes:
                     if lane_id in lanes and lane_id not in claimed[program]:
                         claimed[program].append(lane_id)
-                    if lane_id.startswith(POISONED_SUFFIX) and scan_count <= 20:
-                        import sys
-
-                        print(
-                            f"[DIAG] {program} scan={scan_count} "
-                            f"lane={lane_id} outcome={outcome}",
-                            file=sys.stderr,
-                            flush=True,
-                        )
                 rows = _rows(lanes)
                 mine = [r for r in rows.values() if r["program"] == program]
                 if mine and all(

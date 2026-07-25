@@ -232,9 +232,6 @@ class _SubprocessAdapterBase:
                 and isinstance(prior.get("worker_instance_id"), str)
                 and isinstance(prior.get("started_at"), str)
             ):
-                # A command ID is single-use even after its process exits.
-                # Returning the durable handle lets reconciliation collect the
-                # result (or escalate missing output) without relaunching it.
                 return WorkerHandle(
                     command_id=command.command_id,
                     work_item_id=command.work_item_id,
@@ -246,22 +243,34 @@ class _SubprocessAdapterBase:
 
         stdout_f = paths["stdout"].open("wb")
         stderr_f = paths["stderr"].open("wb")
-        # New session so the worker survives a controller crash; the CLI inherits
-        # the environment (and thus its provider key) but never the packet's.
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
+        # subprocess.Popen, not asyncio.create_subprocess_exec: the controller
+        # calls launch() via asyncio.run(), which closes the event loop on
+        # return.  asyncio's SubprocessTransport.__del__ calls self._proc.kill()
+        # during that cleanup, sending SIGKILL to the worker before it can write
+        # output.  Popen.__del__ only warns — it never kills — so the worker
+        # survives the caller's event-loop teardown.  start_new_session keeps
+        # it alive across a controller crash (same as before).
+        proc = subprocess.Popen(  # noqa: ASYNC220
+            argv,
             stdout=stdout_f,
             stderr=stderr_f,
             cwd=str(command.working_directory),
             start_new_session=True,
             env=self._env(command, paths),
         )
+        # Close the parent's copies immediately.  The child inherited its own
+        # FDs via fork; these are redundant and keeping them open would prevent
+        # EOF detection on the child's side of any pipe.
+        stdout_f.close()
+        stderr_f.close()
+
         process_start_time = _process_start_time(proc.pid)
         if process_start_time is None:
-            proc.terminate()
-            await proc.wait()
-            stdout_f.close()
-            stderr_f.close()
+            try:
+                proc.kill()
+                proc.wait()
+            except OSError:
+                pass
             raise RuntimeError(
                 "worker start time is unobservable; refusing PID-only custody"
             )
@@ -271,11 +280,6 @@ class _SubprocessAdapterBase:
         _atomic_json(
             paths["process"],
             {
-                # D1: persist the command_id and the lease fence of the run that
-                # actually launched. collect_result stamps the claim from this
-                # launch record, so a stale worker's late output is fenced by the
-                # epoch it ran under, not by a command rebuilt off a since-
-                # renewed live row.
                 "command_id": command.command_id,
                 "pid": proc.pid,
                 "process_start_time": process_start_time,
@@ -286,21 +290,12 @@ class _SubprocessAdapterBase:
             },
         )
 
-        # Best-effort reaper: record the exit code when the process finishes.
-        async def _reap() -> None:
-            rc = await proc.wait()
-            stdout_f.close()
-            stderr_f.close()
-            paths["exit"].write_text(str(rc), encoding="utf-8")
-
-        asyncio.ensure_future(_reap())
-
         return WorkerHandle(
             command_id=command.command_id,
             work_item_id=command.work_item_id,
             worker_instance_id=worker_instance_id,
             pid=proc.pid,
-            session_id=None,  # populated by collect_result if the CLI reports one
+            session_id=None,
             started_at=started_at,
         )
 
